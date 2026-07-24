@@ -23,6 +23,16 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
+/// .
+///
+/// # Panics
+///
+/// Panics if .
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - File reading fails
 pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Result<AudioAsset> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,

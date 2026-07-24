@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
 
 use crate::{
     engine::tick::Tick,
@@ -12,9 +12,29 @@ use crate::{
         project::ProjectData,
     },
 };
+
+pub trait ErasedCommand {
+    fn execute(self, project: &mut ProjectData) -> Result<Box<dyn Any>>;
+}
+
+impl<C: Command> ErasedCommand for C {
+    fn execute(self, project: &mut ProjectData) -> Result<Box<dyn Any>>
+    where
+        <C as Command>::Output: 'static,
+    {
+        let res = self.execute(project)?;
+        Ok(Box::new(res))
+    }
+}
+
 use anyhow::Result;
 pub trait Command {
     type Output;
+    /// Defines the behavior of the [`Command`]
+    ///
+    /// # Errors
+    ///
+    /// Implementation specific
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output>;
 }
 

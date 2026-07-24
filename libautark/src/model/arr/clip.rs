@@ -14,6 +14,8 @@ pub trait Clip<K: Kind>: Sized + Serialize + DeserializeOwned {
     fn new(start: Tick, length: Tick, asset_id: <K::Asset as Stored>::Id) -> Self;
 
     fn start_mut(&mut self) -> &mut Tick;
+
+    fn parent(&self) -> Option<<K::Clip as Stored>::Id>;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -21,6 +23,7 @@ pub struct AudioClip {
     pub start: Tick,
     pub length: Tick,
     pub asset_id: AudioAssetID,
+    pub parent: Option<AudioClipID>,
 }
 
 impl Stored for AudioClip {
@@ -43,11 +46,16 @@ impl Clip<Audio> for AudioClip {
             start,
             length,
             asset_id,
+            parent: None,
         }
     }
 
     fn start_mut(&mut self) -> &mut Tick {
         &mut self.start
+    }
+
+    fn parent(&self) -> Option<<<Audio as Kind>::Clip as Stored>::Id> {
+        self.parent
     }
 }
 

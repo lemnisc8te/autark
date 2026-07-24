@@ -22,6 +22,11 @@ pub struct AudioManager {
 }
 
 impl AudioManager {
+    /// Create a new [`AudioManager`]
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if creating or playing the audio stream fails.
     pub fn new(
         init_update: GraphUpdate,
         config: &EngineConfig,

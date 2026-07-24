@@ -150,10 +150,13 @@ impl Engine {
         self.config.config.channels
     }
 
-    /// Not a Command on purpose — asset import is I/O-bound and, unlike
-    /// graph/clip edits, isn't meaningfully undo-able in the same sense.
-    /// A real engine would still route this through some queue so it
-    /// doesn't block the caller, but it's direct here for clarity.
+    /// Load an asset into the [`Engine`].
+    ///
+    /// Currently is blocking; will eventually create a dedicated off-threa asset server similar to the audio thread.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if [`assetserver::load_audio_asset`] fails
     pub fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
         let asset = assetserver::load_audio_asset(path, self.sample_rate())?;
         let mut next = (*self.current).clone();
@@ -162,12 +165,16 @@ impl Engine {
         Ok(id)
     }
 
+    /// Execute a command in the engine.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the command fails.
     pub fn apply<T>(&mut self, cmd: T) -> Result<T::Output>
     where
         T: Command,
     {
         let mut next = (*self.current).clone();
-
         let res = Self::apply_command(&mut next, cmd)?;
         self.commit(next);
         Ok(res)
@@ -245,8 +252,7 @@ impl Engine {
         cmd.execute(project)
     }
 
-    pub fn move_playhead(&self, to: Tick) -> Result<()> {
+    pub fn move_playhead(&self, to: Tick) {
         self.playhead.swap(to.0, Ordering::Relaxed);
-        Ok(())
     }
 }
