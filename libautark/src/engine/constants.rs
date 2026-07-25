@@ -11,3 +11,5 @@ pub const GARBAGE_RING_CAPACITY: usize = 64;
 
 /// Defines the maximum amount of slots in the `BlockBufferPool` manipulated by the audio thread
 pub const MAX_BUFFER_SLOTS: usize = 4096;
+
+pub const COMMAND_RING_CAPACITY: usize = 64;

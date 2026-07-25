@@ -1,9 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use slotmap::new_key_type;
+use slotmap::{SlotMap, new_key_type};
 
-use crate::model::{Audio, Kind, Stored};
+use crate::model::{Audio, Kind, Stored, project::ProjectData};
 
 new_key_type! {
     pub struct AudioAssetID;
@@ -31,14 +32,8 @@ pub struct AudioAsset {
 impl Stored for AudioAsset {
     type Id = AudioAssetID;
 
-    fn access(project: &super::project::ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
-        &project.assets
-    }
-
-    fn access_mut(
-        project: &mut super::project::ProjectData,
-    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
-        &mut project.assets
+    fn access(project: &ProjectData) -> Arc<Mutex<SlotMap<Self::Id, Self>>> {
+        project.assets.clone()
     }
 }
 

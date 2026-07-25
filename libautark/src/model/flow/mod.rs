@@ -14,7 +14,7 @@ use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
         flow::socket::{Socket, SocketID},
-        project::ProjectData,
+        project::{ProjectData, RtProjectData},
     },
 };
 
@@ -58,7 +58,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
         &self,
         pool: &mut PoolExecutor,
         state: &mut Self::State,
-        project: &ProjectData,
+        project: &RtProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
@@ -82,7 +82,7 @@ pub trait ErasedNode: std::fmt::Debug + DynClone + Send + Sync + 'static {
         &self,
         pool: &mut PoolExecutor,
         state: &mut dyn Any,
-        project: &ProjectData,
+        project: &RtProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
@@ -109,7 +109,7 @@ impl<N: Node> ErasedNode for N {
         &self,
         pool: &mut PoolExecutor,
         state: &mut dyn Any,
-        project: &ProjectData,
+        project: &RtProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

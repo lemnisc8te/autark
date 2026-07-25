@@ -5,7 +5,7 @@ use crate::{
     model::{
         Audio, DataKind, Kind, Renderable, Stored,
         flow::{Node, Socket},
-        project::ProjectData,
+        project::RtProjectData,
     },
 };
 
@@ -41,7 +41,7 @@ impl Node for TrackReader<Audio> {
         &self,
         pool: &mut PoolExecutor,
         _state: &mut Self::State,
-        project: &ProjectData,
+        project: &RtProjectData,
         block_start: Tick,
         _: &[SlotIndex],
         outputs: &[SlotIndex],

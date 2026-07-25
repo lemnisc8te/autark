@@ -1,3 +1,1 @@
-pub struct TrackData {
-    ,
-}
+pub struct TrackData {}

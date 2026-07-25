@@ -9,14 +9,21 @@ pub mod filesystem;
 mod model;
 pub mod render;
 
-use libautark::engine::{Command, ErasedCommand};
+use std::sync::Arc;
+
+use libautark::{
+    engine::{Engine, ErasedCommand},
+    model::project::ProjectData,
+};
+use tokio::sync::mpsc;
+
 use vizia::prelude::*;
 
 use crate::{counter::CounterModifiers, model::track::TrackData};
 
 // Define the application data model
 pub struct AppData {
-    engine_tx: rtrb::Producer<Box<dyn ErasedCommand>>,
+    engine_tx: mpsc::Sender<Box<dyn ErasedCommand + Send>>,
     count: Signal<i32>,
     tracks: Signal<Vec<TrackData>>,
 }
@@ -25,7 +32,7 @@ pub struct AppData {
 pub enum AppEvent {
     Increment,
     Decrement,
-    AddTrack,
+    // AddTrack,
 }
 
 // Mutate application data in response to events
@@ -33,21 +40,34 @@ impl Model for AppData {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|app_event, meta| match app_event {
             AppEvent::Decrement => self.count.update(|count| *count -= 1),
-            AppEvent::Increment => self.count.update(|count| *count += 1),AppEvent::AddTrack => self.tracks.update(|e|),
+            AppEvent::Increment => self.count.update(|count| *count += 1),
+            // AppEvent::AddTrack => self.tracks.update(|e|),
         });
     }
 }
 
 mod counter;
 
-fn main() -> Result<(), ApplicationError> {
-    Application::new(|cx| {
+#[tokio::main]
+async fn main() -> Result<(), ApplicationError> {
+    let proj = Arc::new(ProjectData::new());
+    let (mut engine, engine_tx) = Engine::init(proj).unwrap();
+    tokio::spawn(async move {
+        engine.run_loop().await;
+    });
+    Application::new(|cx: &mut Context| {
         cx.add_stylesheet(include_style!("src/style.css"))
             .expect("Failed to load stylesheet");
         let count = Signal::new(0);
         let tracks = Signal::new(vec![]);
+
         // Build model data into the application
-        AppData { count, tracks }.build(cx);
+        AppData {
+            engine_tx,
+            count,
+            tracks,
+        }
+        .build(cx);
 
         // Add the custom counter view and bind to the model data
         counter::Counter::new(cx, count)

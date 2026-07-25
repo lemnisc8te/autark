@@ -5,7 +5,7 @@ use crate::{
     model::{
         Audio, DataKind, Kind,
         flow::{MultiInputNode, Node, Socket},
-        project::ProjectData,
+        project::{ProjectData, RtProjectData},
     },
 };
 
@@ -36,7 +36,7 @@ impl Node for Sum<Audio> {
         &self,
         pool: &mut PoolExecutor,
         _state: &mut Self::State,
-        _: &ProjectData,
+        _: &RtProjectData,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

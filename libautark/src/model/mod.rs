@@ -1,5 +1,7 @@
-use std::hash::Hash;
+use std::{hash::Hash, sync::Arc};
 
+use anyhow::Result;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
 
@@ -11,7 +13,7 @@ use crate::{
             track::{AudioTrack, Track},
         },
         asset::AudioAsset,
-        project::ProjectData,
+        project::{ProjectData, RtProjectData},
     },
 };
 
@@ -54,6 +56,8 @@ pub trait Kind:
     + Hash
     + Serialize
     + DeserializeOwned
+    + Send
+    + Sync
 {
     type Asset: Stored;
     type Clip: Clip<Self> + Stored;
@@ -80,11 +84,19 @@ impl DataKind {
 }
 
 pub trait Renderable {
-    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16);
+    fn render(&self, proj: &RtProjectData, buf: &mut [f32], block_start: Tick, channels: u16);
 }
 
 pub trait Stored: Sized {
-    type Id: Key + Serialize + DeserializeOwned;
-    fn access(project: &ProjectData) -> &SlotMap<Self::Id, Self>;
-    fn access_mut(project: &mut ProjectData) -> &mut SlotMap<Self::Id, Self>;
+    type Id: Key + Serialize + DeserializeOwned + Send + Sync;
+    fn access(project: &ProjectData) -> Arc<Mutex<SlotMap<Self::Id, Self>>>;
+    fn mutate<T>(
+        project: &ProjectData,
+        f: impl FnOnce(&mut SlotMap<Self::Id, Self>) -> Result<T>,
+    ) -> Result<T> {
+        let map = Self::access(project);
+        let mut map_lock = map.lock();
+        f(&mut map_lock)
+    }
+    // fn access_mut(project: &ProjectData) -> Arc<Mutex<SlotMap<Self::Id, Self>>>;
 }

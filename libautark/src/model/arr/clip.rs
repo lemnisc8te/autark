@@ -1,9 +1,16 @@
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use slotmap::new_key_type;
+use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     engine::tick::Tick,
-    model::{Audio, Kind, Renderable, Stored, asset::AudioAssetID},
+    model::{
+        Audio, Kind, Renderable, Stored,
+        asset::AudioAssetID,
+        project::{ProjectData, RtProjectData},
+    },
 };
 
 new_key_type! {
@@ -29,14 +36,8 @@ pub struct AudioClip {
 impl Stored for AudioClip {
     type Id = AudioClipID;
 
-    fn access(project: &crate::model::project::ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
-        &project.clips
-    }
-
-    fn access_mut(
-        project: &mut crate::model::project::ProjectData,
-    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
-        &mut project.clips
+    fn access(project: &ProjectData) -> Arc<Mutex<SlotMap<Self::Id, Self>>> {
+        project.clips.clone()
     }
 }
 
@@ -60,13 +61,7 @@ impl Clip<Audio> for AudioClip {
 }
 
 impl Renderable for AudioClip {
-    fn render(
-        &self,
-        proj: &crate::model::project::ProjectData,
-        buf: &mut [f32],
-        block_start: Tick,
-        channels: u16,
-    ) {
+    fn render(&self, proj: &RtProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         let block_len: Tick = (buf.len() / channels as usize).into();
 
         let block_end = block_start + block_len;

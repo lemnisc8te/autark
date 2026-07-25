@@ -4,14 +4,14 @@ use slotmap::SecondaryMap;
 
 use crate::{
     engine::{CompiledGraph, constants::MAX_NODES},
-    model::{flow::NodeID, project::ProjectData},
+    model::{flow::NodeID, project::RtProjectData},
 };
 
 /// Everything a topology change implies, computed entirely off the audio
 /// thread and handed over as one atomic unit so the schedule and the state
 /// pool additions it depends on can never arrive out of sync.
 pub struct GraphUpdate {
-    pub project: Arc<ProjectData>,
+    pub project: RtProjectData,
     pub schedule: Arc<CompiledGraph>,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,

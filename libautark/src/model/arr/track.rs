@@ -1,12 +1,16 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
     model::{
-        Audio, Kind, Renderable, Stored, arr::clip::AudioClipID, flow::NodeID, project::ProjectData,
+        Audio, Kind, Renderable, Stored,
+        arr::clip::AudioClipID,
+        flow::NodeID,
+        project::{ProjectData, RtProjectData},
     },
 };
 
@@ -34,12 +38,8 @@ pub struct AudioTrack {
 impl Stored for AudioTrack {
     type Id = AudioTrackID;
 
-    fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
-        &project.tracks
-    }
-
-    fn access_mut(project: &mut ProjectData) -> &mut slotmap::SlotMap<Self::Id, Self> {
-        &mut project.tracks
+    fn access(project: &ProjectData) -> Arc<Mutex<slotmap::SlotMap<Self::Id, Self>>> {
+        project.tracks.clone()
     }
 }
 
@@ -75,7 +75,7 @@ impl Track<Audio> for AudioTrack {
 }
 
 impl Renderable for AudioTrack {
-    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
+    fn render(&self, proj: &RtProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
         let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;

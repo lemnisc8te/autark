@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     engine::{CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError, tick::Tick},
@@ -19,10 +19,20 @@ use crate::{
 };
 use anyhow::Result;
 
+use parking_lot::Mutex;
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
 pub struct ProjectData {
+    pub tracks: Arc<Mutex<SlotMap<AudioTrackID, AudioTrack>>>,
+    pub clips: Arc<Mutex<SlotMap<AudioClipID, AudioClip>>>,
+    pub assets: Arc<Mutex<SlotMap<AudioAssetID, AudioAsset>>>,
+    pub graph: Arc<Mutex<NodeGraph>>,
+    pub master_node_id: NodeID,
+}
+
+#[derive(Debug, Clone)]
+pub struct RtProjectData {
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
     pub clips: SlotMap<AudioClipID, AudioClip>,
     pub assets: SlotMap<AudioAssetID, AudioAsset>,
@@ -30,108 +40,152 @@ pub struct ProjectData {
     pub master_node_id: NodeID,
 }
 
+impl From<Arc<ProjectData>> for RtProjectData {
+    fn from(value: Arc<ProjectData>) -> Self {
+        Self {
+            tracks: {
+                let guard = value.tracks.lock();
+                (*guard).clone()
+            },
+            clips: {
+                let guard = value.clips.lock();
+                (*guard).clone()
+            },
+            assets: {
+                let guard = value.assets.lock();
+                (*guard).clone()
+            },
+            graph: {
+                let guard = value.graph.lock();
+                (*guard).clone()
+            },
+            master_node_id: value.master_node_id,
+        }
+    }
+}
+
 impl ProjectData {
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
-
         let master_node = Master;
         let master_node_id = graph.add_node(master_node);
         Self {
-            tracks: SlotMap::with_key(),
-            clips: SlotMap::with_key(),
-            assets: SlotMap::with_key(),
-            graph,
+            tracks: Arc::new(Mutex::new(SlotMap::with_key())),
+            clips: Arc::new(Mutex::new(SlotMap::with_key())),
+            assets: Arc::new(Mutex::new(SlotMap::with_key())),
+            graph: Arc::new(Mutex::new(graph)),
             master_node_id,
         }
     }
 
-    pub fn remove_link(&mut self, from: SocketID, to: SocketID) -> Result<()> {
-        self.graph.remove_link(from, to)
+    pub fn remove_link(&self, from: SocketID, to: SocketID) -> Result<()> {
+        let mut graph = self.graph.lock();
+        graph.remove_link(from, to)
     }
 
-    pub fn add_link(&mut self, from_id: SocketID, to_id: SocketID) -> Result<Option<SocketID>> {
-        self.graph.add_link(from_id, to_id)
+    pub fn add_link(&self, from_id: SocketID, to_id: SocketID) -> Result<Option<SocketID>> {
+        let mut graph = self.graph.lock();
+        graph.add_link(from_id, to_id)
     }
 
     pub fn move_clip<K: Kind>(
-        &mut self,
+        &self,
         track: <K::Track as Stored>::Id,
         clip: <K::Clip as Stored>::Id,
         new_start: Tick,
     ) -> Result<()> {
-        let track = K::Track::access_mut(self)
-            .get_mut(track)
-            .ok_or(EngineError::TrackNotFound)?;
-        track.clips_mut().retain(|_, &mut id| id != clip);
-        track.clips_mut().insert(new_start, clip);
-        if let Some(c) = K::Clip::access_mut(self).get_mut(clip) {
-            *c.start_mut() = new_start;
-        }
-        Ok(())
+        K::Track::mutate(self, |tracks| {
+            let track = tracks.get_mut(track).ok_or(EngineError::TrackNotFound)?;
+            track.clips_mut().retain(|_, &mut id| id != clip);
+            track.clips_mut().insert(new_start, clip);
+            Ok(())
+        })?;
+
+        K::Clip::mutate(self, |clips| {
+            if let Some(c) = clips.get_mut(clip) {
+                *c.start_mut() = new_start;
+            }
+            Ok(())
+        })
     }
 
     pub fn add_clip_to_track<K: Kind>(
-        &mut self,
+        &self,
         track: <K::Track as Stored>::Id,
         start: Tick,
         length: Tick,
         asset_id: <K::Asset as Stored>::Id,
     ) -> Result<<K::Clip as Stored>::Id> {
-        let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
-        let track = K::Track::access_mut(self)
-            .get_mut(track)
-            .ok_or(EngineError::TrackNotFound)?;
-        track.clips_mut().insert(start, clip_id);
-        Ok(clip_id)
+        let clip_id = K::Clip::mutate(self, |clips| {
+            Ok(clips.insert(K::Clip::new(start, length, asset_id)))
+        })?;
+
+        K::Track::mutate(self, |tracks| {
+            let track = tracks.get_mut(track).ok_or(EngineError::TrackNotFound)?;
+            track.clips_mut().insert(start, clip_id);
+            Ok(clip_id)
+        })
     }
 
-    pub fn remove_track<K: Kind>(&mut self, track_id: <K::Track as Stored>::Id) -> Result<()> {
-        let track = K::Track::access_mut(self)
-            .remove(track_id)
-            .ok_or(EngineError::TrackNotFound)?;
+    pub fn remove_track<K: Kind>(&self, track_id: <K::Track as Stored>::Id) -> Result<()> {
+        let tracks = K::Track::access(self);
+        let mut tracks = tracks.lock();
+        let track = tracks.remove(track_id).ok_or(EngineError::TrackNotFound)?;
         let linked_id = track
             .linked_node_id()
             .expect("Track was orphaned from node");
-        self.graph.purge(linked_id);
+        drop(tracks);
+
+        let mut graph = self.graph.lock();
+        graph.purge(linked_id);
+        drop(graph);
+
+        let clips = K::Clip::access(self);
+        let mut clips = clips.lock();
         for clip_id in track.clips().values() {
-            K::Clip::access_mut(self).remove(*clip_id);
+            clips.remove(*clip_id);
         }
         Ok(())
     }
 
     pub fn add_track<K: Kind>(
-        &mut self,
+        &self,
         name: String,
         channels: u16,
     ) -> Result<(<K::Track as Stored>::Id, NodeID)>
     where
         TrackReader<K>: Node,
     {
-        let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
+        let track_id = K::Track::mutate(self, |tracks| Ok(tracks.insert(K::Track::new(name))))?;
         let reader_node = TrackReader::<K>::new(track_id, channels);
-        let node_id = self.graph.add_node(reader_node);
-        *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
-        Ok((track_id, node_id))
+        let node_id = self.graph.lock().add_node(reader_node);
+        K::Track::mutate(self, |tracks| {
+            let track = &mut tracks[track_id];
+            *track.linked_node_id_mut() = Some(node_id);
+            Ok((track_id, node_id))
+        })
     }
 
-    pub fn add_socket_to_node(&mut self, node_id: NodeID, socket: Socket) -> Result<SocketID> {
-        let id = self.graph.sockets.insert(SocketMeta {
+    pub fn add_socket_to_node(&self, node_id: NodeID, socket: Socket) -> Result<SocketID> {
+        let mut graph = self.graph.lock();
+        let id = graph.sockets.insert(SocketMeta {
             owner: node_id,
             direction: SocketDirection::Input,
             kind: socket.kind,
             name: socket.name,
             visible: socket.visible,
         });
-        self.graph.node_sockets[node_id].0.push(id);
+        graph.node_sockets[node_id].0.push(id);
         Ok(id)
     }
 
-    pub fn remove_node_input(&mut self, node_id: NodeID) -> Result<()> {
+    pub fn remove_node_input(&self, node_id: NodeID) -> Result<()> {
         todo!()
     }
 
-    pub fn socket_kind_of(&mut self, endpoint: SocketID) -> Result<DataKind> {
-        self.graph
+    pub fn socket_kind_of(&self, endpoint: SocketID) -> Result<DataKind> {
+        let graph = self.graph.lock();
+        graph
             .sockets
             .get(endpoint)
             .map(|s| s.kind)
@@ -139,13 +193,14 @@ impl ProjectData {
     }
 
     pub fn compile_graph(&self) -> Result<CompiledGraph> {
-        let order = self.graph.topo_sort()?;
+        let graph = self.graph.lock();
+        let order = graph.topo_sort()?;
 
         let mut socket_slot: HashMap<SocketID, SlotIndex> = HashMap::new();
         let mut buffer_count = 1usize; // slot 0 reserved for silence
 
         for &node_id in &order {
-            for &out_id in self.graph.outputs_of(node_id) {
+            for &out_id in graph.outputs_of(node_id) {
                 socket_slot.insert(out_id, buffer_count);
                 buffer_count += 1;
             }
@@ -153,13 +208,13 @@ impl ProjectData {
 
         let mut steps = Vec::with_capacity(order.len());
         for &node_id in &order {
-            let input_ids = self.graph.inputs_of(node_id);
-            let output_ids = self.graph.outputs_of(node_id);
+            let input_ids = graph.inputs_of(node_id);
+            let output_ids = graph.outputs_of(node_id);
 
             let input_slots: Vec<SlotIndex> = input_ids
                 .iter()
                 .map(|&in_id| {
-                    self.graph
+                    graph
                         .links
                         .get(in_id) // O(1) lookup — no per-socket Vec to build anymore
                         .and_then(|src| socket_slot.get(src))
@@ -180,8 +235,7 @@ impl ProjectData {
             });
         }
 
-        let master_output_slot = self
-            .graph
+        let master_output_slot = graph
             .node_sockets
             .get(self.master_node_id)
             .and_then(|(_, outs)| outs.first())

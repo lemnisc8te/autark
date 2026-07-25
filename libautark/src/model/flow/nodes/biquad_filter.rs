@@ -5,6 +5,7 @@ use crate::{
     model::{
         DataKind,
         flow::{Node, Socket},
+        project::RtProjectData,
     },
 };
 
@@ -128,7 +129,7 @@ impl Node for BiquadFilter {
         &self,
         pool: &mut crate::engine::bbp::PoolExecutor,
         state: &mut Self::State,
-        _: &crate::model::project::ProjectData,
+        _: &RtProjectData,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

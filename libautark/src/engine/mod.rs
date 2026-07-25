@@ -8,6 +8,7 @@ pub mod engineconfig;
 pub mod errors;
 pub mod state;
 pub mod tick;
+pub mod token;
 pub mod transport;
 
 use std::path::PathBuf;
@@ -17,15 +18,15 @@ use std::sync::{Arc, atomic::AtomicU64};
 use crate::engine::audiomanager::AudioManager;
 use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
-use crate::engine::constants::{MAX_BUFFER_SLOTS, MAX_NODES};
+use crate::engine::constants::{COMMAND_RING_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES};
 use crate::engine::state::{GraphUpdate, NodeStatePool};
 use crate::engine::transport::Transport;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 
-use crate::model::{asset::AudioAssetID, flow::NodeID, project::ProjectData};
+use crate::model::project::ProjectData;
+use crate::model::{asset::AudioAssetID, flow::NodeID, project::RtProjectData};
 
 use anyhow::Result;
-
 pub type SlotIndex = usize;
 
 pub struct ScheduleStep {
@@ -43,7 +44,7 @@ pub struct CompiledGraph {
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
     schedule: &CompiledGraph,
-    project: &ProjectData,
+    project: &RtProjectData,
     block_start: Tick,
     pool: &'a mut BlockBufferPool,
     state_pool: &mut NodeStatePool,
@@ -73,15 +74,10 @@ pub fn execute_block<'a>(
     // })
 }
 
-/// What the audio thread reads.
-pub struct RenderState {
-    pub project: Arc<ProjectData>,
-    pub schedule: Arc<CompiledGraph>,
-}
-
 pub struct Engine {
-    pub transport: Arc<Transport>,
-    pub playhead: Arc<AtomicU64>,
+    cmd_rx: tokio::sync::mpsc::Receiver<Box<dyn ErasedCommand + Send>>,
+    transport: Arc<Transport>,
+    playhead: Arc<AtomicU64>,
     config: EngineConfig,
     current: Arc<ProjectData>,
     undo_stack: Vec<Arc<ProjectData>>,
@@ -99,24 +95,31 @@ impl Engine {
     /// # Errors
     ///
     /// This function will return an error if .
-    pub fn new(project: Arc<ProjectData>) -> Result<Self> {
+    pub fn init(
+        project: Arc<ProjectData>,
+    ) -> Result<(
+        Self,
+        tokio::sync::mpsc::Sender<Box<dyn ErasedCommand + Send>>,
+    )> {
         let config = EngineConfig::create()?;
         let schedule = project.compile_graph()?;
         assert!(
-            !(schedule.buffer_count > MAX_BUFFER_SLOTS || project.graph.nodes.len() > MAX_NODES),
+            !(schedule.buffer_count > MAX_BUFFER_SLOTS
+                || project.graph.lock().nodes.len() > MAX_NODES),
             "Graph is too large"
         );
 
         // Initial state for every node already in the fresh graph.
         let state_additions: Vec<_> = project
             .graph
+            .lock()
             .nodes
             .iter()
             .map(|(id, node)| (id, node.spawn_state()))
             .collect();
 
         let init_update = GraphUpdate {
-            project: project.clone(),
+            project: project.clone().into(),
             schedule: Arc::new(schedule),
             state_additions,
             state_removals: Vec::new(),
@@ -127,7 +130,11 @@ impl Engine {
         let audio_manager =
             AudioManager::new(init_update, &config, transport.clone(), playhead.clone())?;
 
-        Ok(Self {
+        let (cmd_tx, cmd_rx): (tokio::sync::mpsc::Sender<_>, tokio::sync::mpsc::Receiver<_>) =
+            tokio::sync::mpsc::channel(COMMAND_RING_CAPACITY);
+
+        let me = Self {
+            cmd_rx,
             config,
             playhead,
             transport,
@@ -135,11 +142,20 @@ impl Engine {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             audio_manager,
-        })
+        };
+
+        Ok((me, cmd_tx))
     }
 
-    pub fn project(&self) -> &ProjectData {
-        &self.current
+    pub async fn run_loop(&mut self) {
+        while let Some(envelope) = self.cmd_rx.recv().await {
+            // 2. Synchronize the backend changes over to the audio thread bridge
+            self.apply(envelope);
+        }
+    }
+
+    pub fn project(&self) -> Arc<ProjectData> {
+        self.current.clone()
     }
 
     pub const fn sample_rate(&self) -> u32 {
@@ -159,9 +175,9 @@ impl Engine {
     /// This function will return an error if [`assetserver::load_audio_asset`] fails
     pub fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
         let asset = assetserver::load_audio_asset(path, self.sample_rate())?;
-        let mut next = (*self.current).clone();
-        let id = next.assets.insert(asset);
-        self.commit(next);
+        let next = Arc::new((*self.current).clone());
+        let id = next.assets.lock().insert(asset);
+        self.commit(next.into());
         Ok(id)
     }
 
@@ -170,14 +186,10 @@ impl Engine {
     /// # Errors
     ///
     /// This function will return an error if the command fails.
-    pub fn apply<T>(&mut self, cmd: T) -> Result<T::Output>
-    where
-        T: Command,
-    {
-        let mut next = (*self.current).clone();
-        let res = Self::apply_command(&mut next, cmd)?;
+    pub fn apply(&mut self, cmd: Box<dyn ErasedCommand + Send>) {
+        let next = Arc::new((*self.current).clone());
+        cmd.execute_and_reply(next.clone());
         self.commit(next);
-        Ok(res)
     }
 
     pub fn undo(&mut self) {
@@ -196,9 +208,9 @@ impl Engine {
         }
     }
 
-    fn commit(&mut self, next: ProjectData) {
+    fn commit(&mut self, next: Arc<ProjectData>) {
         self.undo_stack
-            .push(std::mem::replace(&mut self.current, Arc::new(next)));
+            .push(std::mem::replace(&mut self.current, next));
         self.redo_stack.clear();
         self.publish_current();
     }
@@ -207,12 +219,13 @@ impl Engine {
     /// through the ring. Allocation happens here, on the control thread —
     /// that's fine, this is not the real-time path.
     fn publish_current(&mut self) {
+        let graph = self.current.graph.lock();
         let schedule = self
             .current
             .compile_graph()
             .expect("command validation prevents cycles");
 
-        if schedule.buffer_count > MAX_BUFFER_SLOTS || self.current.graph.nodes.len() > MAX_NODES {
+        if schedule.buffer_count > MAX_BUFFER_SLOTS || graph.nodes.len() > MAX_NODES {
             // In a real UI this would surface as a rejected edit before
             // getting here (validate in Command::execute); this is the
             // last-resort backstop.
@@ -223,18 +236,18 @@ impl Engine {
         let old_ids: std::collections::HashSet<NodeID> = self
             .undo_stack
             .last()
-            .map(|proj| proj.graph.nodes.keys().collect())
+            .map(|proj| proj.graph.lock().nodes.keys().collect())
             .unwrap_or_default();
-        let new_ids: std::collections::HashSet<NodeID> = self.current.graph.nodes.keys().collect();
+        let new_ids: std::collections::HashSet<NodeID> = graph.nodes.keys().collect();
 
         let state_additions: Vec<_> = new_ids
             .difference(&old_ids)
-            .map(|&id| (id, self.current.graph.nodes[id].spawn_state()))
+            .map(|&id| (id, graph.nodes[id].spawn_state()))
             .collect();
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
         let update = GraphUpdate {
-            project: self.current.clone(),
+            project: self.current.clone().into(),
             schedule: Arc::new(schedule),
             state_additions,
             state_removals,
@@ -243,13 +256,6 @@ impl Engine {
         if self.audio_manager.update_tx.push(update).is_err() {
             eprintln!("update ring full — audio thread stalled or edits too rapid; dropping edit");
         }
-    }
-
-    fn apply_command<T>(project: &mut ProjectData, cmd: T) -> Result<T::Output>
-    where
-        T: Command,
-    {
-        cmd.execute(project)
     }
 
     pub fn move_playhead(&self, to: Tick) {
