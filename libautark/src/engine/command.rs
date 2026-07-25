@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    engine::{tick::Tick, token::Entity},
+    engine::{Engine, tick::Tick, token::Entity},
     model::{
         Kind, Stored,
         flow::{
@@ -17,12 +17,12 @@ use tokio::sync::{Notify, oneshot};
 
 /// The object-safe trait used by the channel
 pub trait ErasedCommand: Send {
-    fn execute_and_reply(self: Box<Self>, project: Arc<ProjectData>);
+    fn execute_and_reply(self: Box<Self>, project: Arc<Engine>);
 }
 
 /// The envelope bundles the command, its response channel,
 /// AND its dependency gates (receivers it must wait on).
-struct CommandEnvelope<C: Command> {
+pub struct CommandEnvelope<C: Command> {
     command: C,
     reply_tx: oneshot::Sender<Result<C::Output>>,
     // Prerequisite gates this command must await before it runs
@@ -32,7 +32,7 @@ struct CommandEnvelope<C: Command> {
 }
 
 impl<C: Command + 'static> ErasedCommand for CommandEnvelope<C> {
-    fn execute_and_reply(self: Box<Self>, project: Arc<ProjectData>) {
+    fn execute_and_reply(self: Box<Self>, engine: Arc<Engine>) {
         // Spawn a lightweight task to handle execution out-of-order safely
         tokio::task::spawn(async move {
             // 1. Automatically wait for all parent dependencies to finish
@@ -62,7 +62,7 @@ pub trait Command: Send + Sync {
     /// # Errors
     ///
     /// Implementation specific
-    fn execute(self, project: Arc<ProjectData>) -> Result<Self::Output>;
+    fn execute(self, engine: Arc<Engine>) -> Result<Self::Output>;
 }
 pub struct AddTrack<K: Kind> {
     pub name: String,
@@ -182,5 +182,24 @@ impl Command for RemoveNodeInput {
     type Output = ();
     fn execute(self, project: Arc<ProjectData>) -> Result<Self::Output> {
         project.remove_node_input(self.node_id)
+    }
+}
+
+pub struct Undo;
+
+impl Command for Undo {
+    type Output = ();
+    fn execute(self, project: Arc<ProjectData>) -> Result<Self::Output> {
+        todo!()
+    }
+}
+
+pub struct Redo;
+
+impl Command for Redo {
+    type Output = ();
+
+    fn execute(self, project: Arc<ProjectData>) -> Result<Self::Output> {
+        todo!()
     }
 }

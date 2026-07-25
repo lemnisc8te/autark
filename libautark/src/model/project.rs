@@ -31,7 +31,7 @@ pub struct ProjectData {
     pub master_node_id: NodeID,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub struct RtProjectData {
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
     pub clips: SlotMap<AudioClipID, AudioClip>,

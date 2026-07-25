@@ -12,7 +12,7 @@ pub mod render;
 use std::sync::Arc;
 
 use libautark::{
-    engine::{Engine, ErasedCommand},
+    engine::{CommandEnvelope, Engine, ErasedCommand},
     model::project::ProjectData,
 };
 use tokio::sync::mpsc;

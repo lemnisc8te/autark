@@ -28,11 +28,12 @@ impl AudioManager {
     ///
     /// This function will return an error if creating or playing the audio stream fails.
     pub fn new(
-        init_update: GraphUpdate,
         config: &EngineConfig,
         transport: Arc<Transport>,
         playhead: Arc<AtomicU64>,
     ) -> Result<Self> {
+        let init_update = GraphUpdate::default();
+
         let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
         let (garbage_tx, mut garbage_rx) = rtrb::RingBuffer::<Garbage>::new(GARBAGE_RING_CAPACITY);
 

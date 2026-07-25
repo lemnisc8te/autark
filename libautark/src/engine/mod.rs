@@ -34,7 +34,7 @@ pub struct ScheduleStep {
     pub input_slots: Vec<SlotIndex>,
     pub output_slots: Vec<SlotIndex>,
 }
-
+#[derive(Default)]
 pub struct CompiledGraph {
     pub steps: Vec<ScheduleStep>,
     pub buffer_count: usize,
@@ -42,7 +42,7 @@ pub struct CompiledGraph {
 }
 
 /// Runs the compiled schedule for one block and returns the master mix.
-pub fn execute_block<'a>(
+fn execute_block<'a>(
     schedule: &CompiledGraph,
     project: &RtProjectData,
     block_start: Tick,
@@ -75,14 +75,13 @@ pub fn execute_block<'a>(
 }
 
 pub struct Engine {
-    cmd_rx: tokio::sync::mpsc::Receiver<Box<dyn ErasedCommand + Send>>,
+    cmd_rx: tokio::sync::mpsc::Receiver<Box<dyn ErasedCommand + Send + Sync>>,
     transport: Arc<Transport>,
     playhead: Arc<AtomicU64>,
     config: EngineConfig,
     current: Arc<ProjectData>,
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
-    audio_manager: AudioManager,
 }
 
 impl Engine {
@@ -99,7 +98,7 @@ impl Engine {
         project: Arc<ProjectData>,
     ) -> Result<(
         Self,
-        tokio::sync::mpsc::Sender<Box<dyn ErasedCommand + Send>>,
+        tokio::sync::mpsc::Sender<Box<dyn ErasedCommand + Send + Sync>>,
     )> {
         let config = EngineConfig::create()?;
         let schedule = project.compile_graph()?;
@@ -109,26 +108,11 @@ impl Engine {
             "Graph is too large"
         );
 
-        // Initial state for every node already in the fresh graph.
-        let state_additions: Vec<_> = project
-            .graph
-            .lock()
-            .nodes
-            .iter()
-            .map(|(id, node)| (id, node.spawn_state()))
-            .collect();
-
-        let init_update = GraphUpdate {
-            project: project.clone().into(),
-            schedule: Arc::new(schedule),
-            state_additions,
-            state_removals: Vec::new(),
-        };
+        let init_update = GraphUpdate::default();
         let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let audio_manager =
-            AudioManager::new(init_update, &config, transport.clone(), playhead.clone())?;
+        let audio_manager = AudioManager::new(&config, transport.clone(), playhead.clone())?;
 
         let (cmd_tx, cmd_rx): (tokio::sync::mpsc::Sender<_>, tokio::sync::mpsc::Receiver<_>) =
             tokio::sync::mpsc::channel(COMMAND_RING_CAPACITY);
@@ -141,7 +125,6 @@ impl Engine {
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            audio_manager,
         };
 
         Ok((me, cmd_tx))
@@ -154,15 +137,15 @@ impl Engine {
         }
     }
 
-    pub fn project(&self) -> Arc<ProjectData> {
+    fn project(&self) -> Arc<ProjectData> {
         self.current.clone()
     }
 
-    pub const fn sample_rate(&self) -> u32 {
+    const fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
 
-    pub const fn channels(&self) -> u16 {
+    const fn channels(&self) -> u16 {
         self.config.config.channels
     }
 
@@ -173,11 +156,11 @@ impl Engine {
     /// # Errors
     ///
     /// This function will return an error if [`assetserver::load_audio_asset`] fails
-    pub fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
+    fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
         let asset = assetserver::load_audio_asset(path, self.sample_rate())?;
         let next = Arc::new((*self.current).clone());
         let id = next.assets.lock().insert(asset);
-        self.commit(next.into());
+        self.commit(next);
         Ok(id)
     }
 
@@ -186,13 +169,13 @@ impl Engine {
     /// # Errors
     ///
     /// This function will return an error if the command fails.
-    pub fn apply(&mut self, cmd: Box<dyn ErasedCommand + Send>) {
+    fn apply(&mut self, cmd: Box<dyn ErasedCommand + Send>) {
         let next = Arc::new((*self.current).clone());
         cmd.execute_and_reply(next.clone());
         self.commit(next);
     }
 
-    pub fn undo(&mut self) {
+    fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             self.redo_stack
                 .push(std::mem::replace(&mut self.current, prev));
@@ -200,7 +183,7 @@ impl Engine {
         }
     }
 
-    pub fn redo(&mut self) {
+    fn redo(&mut self) {
         if let Some(next) = self.redo_stack.pop() {
             self.undo_stack
                 .push(std::mem::replace(&mut self.current, next));
