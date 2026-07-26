@@ -1,7 +1,7 @@
 #[forbid(
     unused_unsafe,
     clippy::fallible_impl_from,
-    clippy::used_underscore_binding,
+    // clippy::used_underscore_binding,
     clippy::used_underscore_items,
     clippy::undocumented_unsafe_blocks
 )]

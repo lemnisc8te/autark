@@ -15,6 +15,7 @@ use crate::{
             nodes::{master::Master, trackreader::TrackReader},
             socket::{Socket, SocketDirection, SocketID, SocketMeta},
         },
+        project,
     },
 };
 use anyhow::Result;

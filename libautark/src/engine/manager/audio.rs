@@ -6,22 +6,26 @@ use std::sync::{
 use anyhow::Result;
 use cpal::traits::StreamTrait;
 
-use crate::engine::{
-    bbp::BlockBufferPool,
-    constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
-    engineconfig::EngineConfig,
-    execute_block,
-    state::{Garbage, GraphUpdate, NodeStatePool},
-    tick::Tick,
-    transport::Transport,
+use crate::{
+    engine::{
+        CompiledGraph,
+        bbp::BlockBufferPool,
+        constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
+        engineconfig::EngineConfig,
+        manager::Manager,
+        state::{Garbage, GraphUpdate, NodeStatePool},
+        tick::Tick,
+        transport::Transport,
+    },
+    model::project::ProjectData,
 };
 
-pub struct AudioManager {
+pub struct AudioActor {
     pub update_tx: rtrb::Producer<GraphUpdate>,
     _stream: cpal::Stream,
 }
 
-impl AudioManager {
+impl AudioActor {
     pub fn new(
         init_update: GraphUpdate,
         config: &EngineConfig,
@@ -99,7 +103,7 @@ impl AudioManager {
                         return;
                     };
 
-                    let mixed = execute_block(
+                    let mixed = Self::execute_block(
                         schedule,
                         project,
                         Tick(start),
@@ -117,5 +121,38 @@ impl AudioManager {
         )?;
 
         Ok(stream)
+    }
+
+    /// Runs the compiled schedule for one block and returns the master mix.
+    pub fn execute_block<'a>(
+        schedule: &CompiledGraph,
+        project: &ProjectData,
+        block_start: Tick,
+        pool: &'a mut BlockBufferPool,
+        state_pool: &mut NodeStatePool,
+    ) -> &'a [f32] {
+        // assert_no_alloc(|| {
+
+        // Clear the pool. Unless you want to summon demons.
+        pool.clear();
+
+        let mut executor = pool.executor();
+
+        for i in 0..schedule.steps.len() {
+            let step = &schedule.steps[i];
+            let node = &project.graph.nodes[step.node_id];
+
+            node.process_erased(
+                &mut executor,
+                state_pool.get_mut(step.node_id),
+                project,
+                block_start,
+                &step.input_slots,
+                &step.output_slots,
+            );
+        }
+
+        executor.get_input(schedule.master_output_slot)
+        // })
     }
 }
