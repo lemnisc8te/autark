@@ -13,11 +13,10 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
 use crate::engine::constants::{MAX_BUFFER_SLOTS, MAX_NODES};
-use crate::engine::manager::{audio::AudioManager, project::ProjectActor};
-use crate::engine::state::{GraphUpdate, NodeStatePool};
+use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
+use crate::engine::state::GraphUpdate;
 use crate::engine::transport::Transport;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 
@@ -44,7 +43,7 @@ pub struct Engine {
     pub playhead: Arc<AtomicU64>,
     config: EngineConfig,
     project_manager: Arc<ProjectActor>,
-    audio_manager: AudioManager,
+    audio_manager: AudioActor,
 }
 
 impl Engine {
@@ -83,7 +82,7 @@ impl Engine {
         let playhead = Arc::new(AtomicU64::new(0));
 
         let audio_manager =
-            AudioManager::new(init_update, &config, transport.clone(), playhead.clone())?;
+            AudioActor::new(init_update, &config, transport.clone(), playhead.clone())?;
 
         Ok(Self {
             config,

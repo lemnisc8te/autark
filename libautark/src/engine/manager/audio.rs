@@ -12,7 +12,7 @@ use crate::{
         bbp::BlockBufferPool,
         constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
         engineconfig::EngineConfig,
-        manager::Manager,
+        manager::{Actor, Manager},
         state::{Garbage, GraphUpdate, NodeStatePool},
         tick::Tick,
         transport::Transport,

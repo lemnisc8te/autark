@@ -54,6 +54,9 @@ pub trait Kind:
     + Hash
     + Serialize
     + DeserializeOwned
+    + Send
+    + Sync
+    + 'static
 {
     type Asset: Stored;
     type Clip: Clip<Self> + Stored;
@@ -84,7 +87,7 @@ pub trait Renderable {
 }
 
 pub trait Stored: Sized {
-    type Id: Key + Serialize + DeserializeOwned;
+    type Id: Key + Serialize + DeserializeOwned + Send + Sync + 'static;
     fn access(project: &ProjectData) -> &SlotMap<Self::Id, Self>;
     fn access_mut(project: &mut ProjectData) -> &mut SlotMap<Self::Id, Self>;
 }
