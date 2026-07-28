@@ -18,6 +18,7 @@ impl Transport {
     pub const fn new() -> Self {
         Self(AtomicU8::new(0))
     }
+
     #[inline]
     fn transport(&self, to: TransportState) {
         self.0.store(to as u8, Ordering::Relaxed);
@@ -34,5 +35,9 @@ impl Transport {
     #[inline]
     pub fn is_playing(&self) -> bool {
         self.0.load(Ordering::Relaxed) == TransportState::Playing as u8
+    }
+
+    pub fn replace(&self, other: Self) {
+        self.0.swap(other.0.into_inner(), Ordering::Relaxed);
     }
 }

@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use anyhow::Result;
+use async_trait::async_trait;
 use cpal::traits::StreamTrait;
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
         bbp::BlockBufferPool,
         constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
         engineconfig::EngineConfig,
-        manager::{Actor, Manager},
+        manager::{self, Actor, Envelope, Manager, StdManager},
         state::{Garbage, GraphUpdate, NodeStatePool},
         tick::Tick,
         transport::Transport,
@@ -22,16 +23,16 @@ use crate::{
 
 pub struct AudioActor {
     pub update_tx: rtrb::Producer<GraphUpdate>,
+    pub data: (),
+    transport: Arc<Transport>,
     _stream: cpal::Stream,
 }
 
 impl AudioActor {
-    pub fn new(
-        init_update: GraphUpdate,
-        config: &EngineConfig,
-        transport: Arc<Transport>,
-        playhead: Arc<AtomicU64>,
-    ) -> Result<Self> {
+    pub fn init(config: &EngineConfig, playhead: Arc<AtomicU64>) -> Result<Self> {
+        let transport = Arc::new(Transport::new());
+        let init_update = GraphUpdate::default();
+
         let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
         let (garbage_tx, mut garbage_rx) = rtrb::RingBuffer::<Garbage>::new(GARBAGE_RING_CAPACITY);
 
@@ -50,9 +51,12 @@ impl AudioActor {
             }
         });
 
-        let stream = Self::build_stream::<f32>(config, transport, playhead, update_rx, garbage_tx)?;
+        let stream =
+            Self::build_stream::<f32>(config, transport.clone(), playhead, update_rx, garbage_tx)?;
         stream.play()?; // device stream runs continuously; transport gates output
         Ok(Self {
+            transport,
+            data: (),
             update_tx,
             _stream: stream,
         })
@@ -89,12 +93,11 @@ impl AudioActor {
                         }
                     }
 
-                    let frame_count = data.len() / channels as usize;
-                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
-
                     if !transport.is_playing() {
                         return;
                     }
+                    let frame_count = data.len() / channels as usize;
+                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                     let Some(GraphUpdate {
                         project, schedule, ..
@@ -155,4 +158,66 @@ impl AudioActor {
         executor.get_input(schedule.master_output_slot)
         // })
     }
+}
+
+#[async_trait]
+impl Envelope<AudioActor> for GraphUpdate {
+    async fn handle(self, actor: &mut AudioActor) {
+        actor.update_tx.push(self);
+    }
+}
+
+#[async_trait]
+impl Envelope<AudioActor> for Transport {
+    async fn handle(self, actor: &mut AudioActor) {
+        actor.transport.replace(self);
+    }
+}
+
+#[async_trait]
+impl Actor for AudioActor {
+    type InitParams = (EngineConfig, Arc<AtomicU64>);
+    /// The audio stream is inaccessible
+    type Data = ();
+    type Env = GraphUpdate;
+
+    fn new((config, playhead): Self::InitParams) -> Self {
+        Self::init(&config, playhead).unwrap()
+    }
+
+    fn data(&self) -> &Self::Data {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut Self::Data {
+        &mut self.data
+    }
+}
+
+pub struct AudioManager {}
+
+pub struct AudioTaskTransport {}
+
+#[async_trait]
+impl manager::Transport<AudioActor> for AudioTaskTransport {
+    type Sender = rtrb::Producer<<AudioActor as Actor>::Env>;
+    type Receiver = rtrb::Consumer<<AudioActor as Actor>::Env>;
+
+    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
+        rtrb::RingBuffer::new(capacity)
+    }
+
+    fn send(sender: &mut Self::Sender, envelope: <AudioActor as Actor>::Env) -> Result<()> {
+        let _ = sender.push(envelope);
+        Ok(())
+    }
+
+    /// Awaits the next envelope, or `None` once the transport is closed.
+    fn recv(receiver: &mut Self::Receiver) -> Result<<AudioActor as Actor>::Env> {
+        Ok(receiver.pop()?)
+    }
+}
+
+fn test(params: <AudioActor as Actor>::InitParams) {
+    let m = StdManager::<AudioTaskTransport>::spawn(params, 0);
 }

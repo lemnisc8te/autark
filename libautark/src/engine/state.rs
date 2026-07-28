@@ -10,9 +10,10 @@ use crate::{
 /// Everything a topology change implies, computed entirely off the audio
 /// thread and handed over as one atomic unit so the schedule and the state
 /// pool additions it depends on can never arrive out of sync.
+#[derive(Default)]
 pub struct GraphUpdate {
     pub project: Arc<ProjectData>,
-    pub schedule: Arc<CompiledGraph>,
+    pub schedule: CompiledGraph>,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,
 }

@@ -1,3 +1,9 @@
+use crate::engine::manager::BoxedEnvelope;
+use crate::engine::manager::Envelope;
+use crate::engine::manager::Manager;
+use crate::engine::manager::MutatingEnvelope;
+use crate::engine::manager::ReplyPort;
+use crate::engine::manager::Transport;
 use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
@@ -26,8 +32,6 @@ pub struct ProjectActor {
     pub(crate) redo_stack: Vec<ProjectData>,
 }
 
-pub trait ProjectCommand: MutatingCommand<ProjectActor> {}
-
 pub struct AddTrack<K: Kind> {
     pub name: String,
     pub kind: K,
@@ -40,6 +44,7 @@ where
     TrackReader<K>: Node,
 {
     type Output = Result<(<K::Track as Stored>::Id, NodeID)>;
+
     async fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_track::<K>(self.name, self.channels)
     }
@@ -66,6 +71,7 @@ pub struct AddClip<K: Kind> {
 #[async_trait]
 impl<K: Kind> MutatingCommand<ProjectActor> for AddClip<K> {
     type Output = Result<<K::Clip as Stored>::Id>;
+
     async fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
     }
@@ -236,5 +242,43 @@ impl Actor for ProjectActor {
 
     fn data_mut(&mut self) -> &mut Self::Data {
         &mut self.current
+    }
+}
+
+pub struct ProjectTransport {}
+
+#[async_trait]
+impl Transport<ProjectActor> for ProjectTransport {
+    type Data = BoxedEnvelope<ProjectActor>;
+    type Sender = flume::Sender<Self::Data>;
+    type Receiver = flume::Receiver<Self::Data>;
+
+    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
+        flume::bounded(capacity)
+    }
+
+    fn send(sender: &mut Self::Sender, envelope: Self::Data) -> Result<()> {
+        let _ = sender.send(envelope);
+        Ok(())
+    }
+
+    fn recv(receiver: &mut Self::Receiver) -> Result<Self::Data> {
+        Ok(receiver.recv()?)
+    }
+}
+
+pub struct ProjectManager {}
+
+impl Manager<ProjectActor> for ProjectManager {
+    type Transport = ProjectTransport;
+
+    fn spawn(
+        actor: ProjectActor,
+        mailbox_capacity: usize,
+    ) -> (
+        super::Handle<ProjectActor, Self::Transport>,
+        tokio::task::JoinHandle<ProjectActor>,
+    ) {
+        todo!()
     }
 }

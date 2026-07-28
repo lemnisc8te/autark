@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-pub use crate::engine::command::*;
 use crate::engine::constants::{MAX_BUFFER_SLOTS, MAX_NODES};
 use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
 use crate::engine::state::GraphUpdate;
@@ -32,6 +31,7 @@ pub struct ScheduleStep {
     pub output_slots: Vec<SlotIndex>,
 }
 
+#[derive(Default)]
 pub struct CompiledGraph {
     pub steps: Vec<ScheduleStep>,
     pub buffer_count: usize,
@@ -82,19 +82,20 @@ impl Engine {
         let playhead = Arc::new(AtomicU64::new(0));
 
         let audio_manager =
-            AudioActor::new(init_update, &config, transport.clone(), playhead.clone())?;
+            AudioActor::init(init_update, &config, transport.clone(), playhead.clone())?;
 
-        Ok(Self {
-            config,
-            playhead,
-            transport,
-            project_manager: Arc::new(ProjectActor {
-                current: project,
-                undo_stack: Vec::new(),
-                redo_stack: Vec::new(),
-            }),
-            audio_manager,
-        })
+        todo!();
+        // Ok(Self {
+        //     config,
+        //     playhead,
+        //     transport,
+        //     project_manager: Arc::new(ProjectActor {
+        //         current: project,
+        //         undo_stack: Vec::new(),
+        //         redo_stack: Vec::new(),
+        //     }),
+        //     audio_manager,
+        // })
     }
 
     pub fn project(&self) -> &ProjectData {
@@ -107,25 +108,6 @@ impl Engine {
 
     pub const fn channels(&self) -> u16 {
         self.config.config.channels
-    }
-
-    /// Not a Command on purpose — asset import is I/O-bound and, unlike
-    /// graph/clip edits, isn't meaningfully undo-able in the same sense.
-    /// A real engine would still route this through some queue so it
-    /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
-        let asset = assetserver::load_audio_asset(path, self.sample_rate())?;
-        let mut next = (*self.current).clone();
-        let id = next.assets.insert(asset);
-        self.commit(next);
-        Ok(id)
-    }
-
-    fn apply_command<T>(project: &mut ProjectData, cmd: T) -> Result<T::Output>
-    where
-        T: Command,
-    {
-        cmd.execute(project)
     }
 
     pub fn move_playhead(&self, to: Tick) -> Result<()> {
