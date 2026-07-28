@@ -179,7 +179,6 @@ impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
     /// The audio stream is inaccessible
     type Data = ();
-    type Env = GraphUpdate;
 
     fn new((config, playhead): Self::InitParams) -> Self {
         Self::init(&config, playhead).unwrap()
@@ -199,21 +198,21 @@ pub struct AudioManager {}
 pub struct AudioTaskTransport {}
 
 #[async_trait]
-impl manager::Transport<AudioActor> for AudioTaskTransport {
-    type Sender = rtrb::Producer<<AudioActor as Actor>::Env>;
-    type Receiver = rtrb::Consumer<<AudioActor as Actor>::Env>;
+impl manager::Transport<AudioActor, GraphUpdate> for AudioTaskTransport {
+    type Sender = rtrb::Producer<GraphUpdate>;
+    type Receiver = rtrb::Consumer<GraphUpdate>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
         rtrb::RingBuffer::new(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: <AudioActor as Actor>::Env) -> Result<()> {
+    fn send(sender: &mut Self::Sender, envelope: GraphUpdate) -> Result<()> {
         let _ = sender.push(envelope);
         Ok(())
     }
 
     /// Awaits the next envelope, or `None` once the transport is closed.
-    fn recv(receiver: &mut Self::Receiver) -> Result<<AudioActor as Actor>::Env> {
+    fn recv(receiver: &mut Self::Receiver) -> Result<GraphUpdate> {
         Ok(receiver.pop()?)
     }
 }

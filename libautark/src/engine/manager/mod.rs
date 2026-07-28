@@ -11,7 +11,7 @@ pub mod project;
 pub trait Actor: Send + 'static + Sized {
     type InitParams;
     type Data;
-    type Env: Envelope<Self>;
+    // type Envelope: Envelope<Self>;
     fn new(p: Self::InitParams) -> Self;
 
     /// Run once before the first command is processed.
@@ -29,73 +29,63 @@ pub trait Actor: Send + 'static + Sized {
     fn data_mut(&mut self) -> &mut Self::Data;
 }
 
-pub trait IntoEnvelope<A: Actor, O: Send + 'static> {
-    fn into_envelope<T: Transport<A>, R: ReplyPort<O>>(self, reply: R) -> A::Env;
-}
-
-/// A read-only query executed against `&A`. Cannot mutate the actor.
-#[async_trait]
-pub trait Command<A: Actor>: IntoEnvelope<A, Self::Output> + Sized + Send + 'static {
-    type Output: Send + 'static;
-    async fn execute(self, actor: &A::Data) -> Self::Output;
-}
-
-/// A command executed against `&mut A`; may mutate its state.
-#[async_trait]
-pub trait MutatingCommand<A: Actor>:
-    IntoEnvelope<A, Self::Output> + Sized + Send + 'static
-{
-    type Output: Send + 'static;
-    async fn execute(self, actor: &mut A::Data) -> Self::Output;
-}
-
-#[async_trait]
-impl<A: Actor<Env = BoxedEnvelope<A>>, U> IntoEnvelope<A, U::Output> for U
-where
-    U: Command<A>,
-{
-    fn into_envelope<T: Transport<A>, R: ReplyPort<U::Output>>(self, reply: R) -> BoxedEnvelope<A>
-    where
-        A: Actor<Env = BoxedEnvelope<A>>,
-    {
-        Box::new(QueryEnvelope {
-            command: self,
-            reply,
-            _actor: PhantomData,
-        })
-    }
-}
-
-#[async_trait]
-impl<A: Actor<Env = BoxedEnvelope<A>>, U> IntoEnvelope<A, U::Output> for U
-where
-    U: MutatingCommand<A>,
-{
-    fn into_envelope<T: Transport<A>, R: ReplyPort<U::Output>>(self, reply: R) -> BoxedEnvelope<A>
-    where
-        A: Actor<Env = BoxedEnvelope<A>>,
-    {
-        Box::new(MutatingEnvelope {
-            command: self,
-            reply,
-            _actor: PhantomData,
-        })
-    }
-}
-
-#[async_trait]
-impl<A: Actor<Env = BoxedEnvelope<A>>, U> IntoEnvelope<A, <U as MutatingCommand<A>>::Output> for U
-where
-    U: MutatingCommand<A> + Command<A>,
-{
-    fn into_envelope<T: Transport<A>, R: ReplyPort<<U as MutatingCommand<A>>::Output>>(
+pub trait IntoEnvelope<A: Actor>: Command<A> {
+    fn into_envelope<T: Transport<A, impl Envelope<A>>, R: ReplyPort<Self::Output>>(
         self,
         reply: R,
-    ) -> BoxedEnvelope<A>
+    ) -> impl Envelope<A>;
+}
+
+pub struct Ref;
+pub struct Mutate;
+
+trait Permission<A: Actor> {
+    type In<'a>;
+    type Type<'a>;
+    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a>;
+}
+
+impl<A: Actor> Permission<A> for Ref {
+    type In<'a> = &'a A;
+    type Type<'a> = &'a A::Data;
+
+    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a> {
+        a.data()
+    }
+}
+impl<A: Actor> Permission<A> for Mutate {
+    type In<'a> = &'a mut A;
+    type Type<'a> = &'a mut A::Data;
+
+    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a> {
+        a.data_mut()
+    }
+}
+
+// #[async_trait]
+trait Command<A: Actor>: Sized + Send + 'static {
+    type Perm: Permission<A>;
+    type Output: Send + 'static;
+
+    fn execute(self, actor: <Self::Perm as Permission<A>>::Type<'_>) -> Self::Output;
+}
+
+impl<A: Actor, C> IntoEnvelope<A> for C
+where
+    C: Command<A, Perm = Ref>,
+{
+    fn into_envelope<T: Transport<A, impl Envelope<A>>, R: ReplyPort<Self::Output>>(
+        self,
+        reply: R,
+    ) -> impl Envelope<A>
     where
-        A: Actor<Env = BoxedEnvelope<A>>,
+        A: Actor,
     {
-        panic!("Impossible")
+        StdEnvelope {
+            command: self,
+            reply,
+            _actor: PhantomData,
+        }
     }
 }
 
@@ -133,45 +123,41 @@ pub trait Envelope<A: Actor>: Send {
 
 pub type BoxedEnvelope<A: Actor> = Box<dyn Envelope<A>>;
 
-struct QueryEnvelope<A: Actor, C: Command<A>, R: ReplyPort<C::Output>> {
+struct StdEnvelope<A: Actor, P: Permission<A>, C: Command<A, Perm = P>, R: ReplyPort<C::Output>> {
     command: C,
     reply: R,
     _actor: PhantomData<fn() -> A>,
 }
 
 #[async_trait]
-impl<A, C, R> Envelope<A> for QueryEnvelope<A, C, R>
+impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Ref, C, R>
 where
-    A: Actor,
-    C: Command<A>,
+    C: Command<A, Perm = Ref>,
     R: ReplyPort<C::Output>,
 {
     async fn handle(self, actor: &mut A) {
-        let QueryEnvelope { command, reply, .. } = self;
-        let output = command.execute(actor.data()).await;
+        todo!()
+    }
+}
+
+#[async_trait]
+impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Mutate, C, R>
+where
+    C: Command<A, Perm = Mutate>,
+    R: ReplyPort<C::Output>,
+{
+    async fn handle(self, actor: &mut A) {
+        let Self { command, reply, .. } = self;
+        actor.pre_mutate();
+        let output = command.execute(actor.data_mut());
+        actor.post_mutate();
         reply.send(output);
     }
 }
 
-struct MutatingEnvelope<A: Actor, C: MutatingCommand<A>, R: ReplyPort<C::Output>> {
-    command: C,
-    reply: R,
-    _actor: PhantomData<fn() -> A>,
-}
-
-#[async_trait]
-impl<A, C, R> Envelope<A> for MutatingEnvelope<A, C, R>
-where
-    A: Actor,
-    C: MutatingCommand<A>,
-    R: ReplyPort<C::Output>,
-{
-    async fn handle(self, actor: &mut A) {
-        let MutatingEnvelope { command, reply, .. } = self;
-        actor.pre_mutate();
-        let output = command.execute(actor.data_mut()).await;
-        actor.post_mutate();
-        reply.send(output);
+impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
+    async fn handle(self: Box<Self>, actor: &mut A) {
+        self.handle(actor);
     }
 }
 
@@ -181,16 +167,16 @@ where
 /// consumer qualifies: a priority queue, an unbounded channel, a
 /// metrics-wrapped channel, etc.
 #[async_trait]
-pub trait Transport<A: Actor>: Send + 'static {
+pub trait Transport<A: Actor, E: Envelope<A>>: Send + 'static {
     type Sender: Send + 'static;
     type Receiver: Send + 'static;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver);
 
-    fn send(sender: &mut Self::Sender, envelope: A::Env) -> Result<()>;
+    fn send(sender: &mut Self::Sender, envelope: impl Envelope<A>) -> Result<()>;
 
     /// Awaits the next envelope, or `None` once the transport is closed.
-    fn recv(receiver: &mut Self::Receiver) -> Result<A::Env>;
+    fn recv(receiver: &mut Self::Receiver) -> Result<impl Envelope<A>>;
 }
 
 /// A cloneable, `Send + Sync` handle to a running actor. This is what
@@ -199,11 +185,11 @@ pub trait Transport<A: Actor>: Send + 'static {
 /// two entry points — one that replies (`call*`), one that doesn't
 /// (`notify` / `cast_mut`) — both funneling into the same `Envelope`
 /// generic over `ReplyPort`.
-pub struct Handle<A: Actor, T: Transport<A>> {
+pub struct Handle<A: Actor, T: Transport<A, E>, E: Envelope<A>> {
     sender: T::Sender,
 }
 
-impl<A: Actor, T: Transport<A>> Clone for Handle<A, T>
+impl<A: Actor, T: Transport<A, E>, E: Envelope<A>> Clone for Handle<A, T, E>
 where
     T::Sender: Clone,
 {
@@ -214,11 +200,11 @@ where
     }
 }
 
-impl<A: Actor, T: Transport<A>> Handle<A, T> {
+impl<A: Actor, T: Transport<A, E>, E: Envelope<A>> Handle<A, T, E> {
     /// Run a read-only `Command` and await its result.
     pub async fn call<C>(&mut self, command: C) -> Result<C::Output>
     where
-        C: Command<A>,
+        C: IntoEnvelope<A, Perm = Ref>,
     {
         let (tx, rx) = oneshot::channel();
         let envelope = command.into_envelope::<T, _>(Reply(tx));
@@ -231,7 +217,7 @@ impl<A: Actor, T: Transport<A>> Handle<A, T> {
     /// effect (logging, metrics) where the caller doesn't need the value.
     pub async fn notify<C>(&mut self, command: C) -> Result<()>
     where
-        C: Command<A>,
+        C: IntoEnvelope<A, Perm = Ref>,
     {
         let envelope = command.into_envelope::<T, _>(NoReply);
         T::send(&mut self.sender, envelope)
@@ -240,7 +226,7 @@ impl<A: Actor, T: Transport<A>> Handle<A, T> {
     /// Run a `MutatingCommand` and await its result.
     pub async fn call_mut<C>(&mut self, command: C) -> Result<C::Output>
     where
-        C: MutatingCommand<A>,
+        C: IntoEnvelope<A, Perm = Mutate>,
     {
         let (tx, rx) = oneshot::channel();
         let envelope = command.into_envelope::<T, _>(Reply(tx));
@@ -252,7 +238,7 @@ impl<A: Actor, T: Transport<A>> Handle<A, T> {
     /// ("cast" in classic actor-model terms — fire and forget).
     pub async fn cast_mut<C>(&mut self, command: C) -> Result<()>
     where
-        C: MutatingCommand<A>,
+        C: IntoEnvelope<A, Perm = Mutate>,
     {
         let envelope = command.into_envelope::<T, _>(NoReply);
         T::send(&mut self.sender, envelope)
@@ -264,14 +250,15 @@ impl<A: Actor, T: Transport<A>> Handle<A, T> {
 /// restart-on-panic, metrics, tracing spans, backpressure policy, etc.,
 /// all while keeping the same `spawn` signature.
 pub trait Manager<A: Actor> {
-    type Transport: Transport<A>;
+    type Envelope: Envelope<A>;
+    type Transport: Transport<A, Self::Envelope>;
     /// Spawn `actor` onto its own tokio task. Returns a cloneable
     /// `Handle` for sending it commands, and a `JoinHandle` that
     /// resolves to the actor's final state once its mailbox closes.
     fn spawn(
         params: A::InitParams,
         mailbox_capacity: usize,
-    ) -> (Handle<A, Self::Transport>, JoinHandle<A>);
+    ) -> (Handle<A, Self::Transport, Self::Envelope>, JoinHandle<A>);
 }
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
@@ -281,11 +268,15 @@ pub struct StdManager<T>(PhantomData<T>);
 impl<A, T> Manager<A> for StdManager<T>
 where
     A: Actor,
-    T: Transport<A>,
+    T: Transport<A, BoxedEnvelope<A>>,
 {
+    type Envelope = BoxedEnvelope<A>;
     type Transport = T;
 
-    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A, T>, JoinHandle<A>) {
+    fn spawn(
+        params: A::InitParams,
+        mailbox_capacity: usize,
+    ) -> (Handle<A, T, BoxedEnvelope<A>>, JoinHandle<A>) {
         let mut actor = A::new(params);
         let (sender, mut receiver) = T::pair(mailbox_capacity);
 

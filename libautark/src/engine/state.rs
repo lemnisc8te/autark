@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use slotmap::SecondaryMap;
 
 use crate::{
-    engine::{CompiledGraph, constants::MAX_NODES, manager::Command},
+    engine::{CompiledGraph, constants::MAX_NODES, manager::QueryCommand},
     model::{flow::NodeID, project::ProjectData},
 };
 

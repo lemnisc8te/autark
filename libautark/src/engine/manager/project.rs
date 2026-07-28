@@ -1,10 +1,10 @@
 use crate::engine::manager::BoxedEnvelope;
-use crate::engine::manager::Envelope;
+use crate::engine::manager::Command;
 use crate::engine::manager::Manager;
-use crate::engine::manager::MutatingEnvelope;
+use crate::engine::manager::Mutate;
+use crate::engine::manager::Permission;
 use crate::engine::manager::ReplyPort;
 use crate::engine::manager::Transport;
-use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use crate::{
     engine::{
         constants::{MAX_BUFFER_SLOTS, MAX_NODES},
-        manager::{Actor, MutatingCommand},
+        manager::Actor,
         state::GraphUpdate,
         tick::Tick,
     },
@@ -38,28 +38,29 @@ pub struct AddTrack<K: Kind> {
     pub channels: u16,
 }
 
-#[async_trait]
-impl<K: Kind> MutatingCommand<ProjectActor> for AddTrack<K>
+impl<K: Kind> Command<ProjectActor> for AddTrack<K>
 where
     TrackReader<K>: Node,
 {
-    type Output = Result<(<K::Track as Stored>::Id, NodeID)>;
+    type Perm = Mutate;
 
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_track::<K>(self.name, self.channels)
+    type Output = ();
+
+    async fn execute(self, project: <Self::Perm as Permission<ProjectActor>>::Type<'_>) {
+        project.add_track::<K>(self.name, self.channels);
     }
 }
 
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
 
-#[async_trait]
-impl<K: Kind> MutatingCommand<ProjectActor> for RemoveTrack<K> {
-    type Output = Result<()>;
+// #[async_trait]
+// impl<K: Kind> MutatingCommand<ProjectActor> for RemoveTrack<K> {
+//     type Output = Result<()>;
 
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_track::<K>(self.0)
-    }
-}
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.remove_track::<K>(self.0)
+//     }
+// }
 
 pub struct AddClip<K: Kind> {
     pub track: <K::Track as Stored>::Id,
@@ -68,14 +69,14 @@ pub struct AddClip<K: Kind> {
     pub asset_id: <K::Asset as Stored>::Id,
 }
 
-#[async_trait]
-impl<K: Kind> MutatingCommand<ProjectActor> for AddClip<K> {
-    type Output = Result<<K::Clip as Stored>::Id>;
+// #[async_trait]
+// impl<K: Kind> MutatingCommand<ProjectActor> for AddClip<K> {
+//     type Output = Result<<K::Clip as Stored>::Id>;
 
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
-    }
-}
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
+//     }
+// }
 
 pub struct MoveClip<K: Kind> {
     pub track: <K::Track as Stored>::Id,
@@ -83,50 +84,50 @@ pub struct MoveClip<K: Kind> {
     pub new_start: Tick,
 }
 
-#[async_trait]
-impl<K: Kind> MutatingCommand<ProjectActor> for MoveClip<K> {
-    type Output = Result<()>;
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.move_clip::<K>(self.track, self.clip, self.new_start)
-    }
-}
+// #[async_trait]
+// impl<K: Kind> MutatingCommand<ProjectActor> for MoveClip<K> {
+//     type Output = Result<()>;
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.move_clip::<K>(self.track, self.clip, self.new_start)
+//     }
+// }
 
 pub struct AddNode<N: Node> {
     pub node: N,
 }
 
-#[async_trait]
-impl<N: Node> MutatingCommand<ProjectActor> for AddNode<N> {
-    type Output = NodeID;
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.graph.add_node(self.node)
-    }
-}
+// #[async_trait]
+// impl<N: Node> MutatingCommand<ProjectActor> for AddNode<N> {
+//     type Output = NodeID;
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.graph.add_node(self.node)
+//     }
+// }
 
 pub struct AddLink {
     pub from: SocketID,
     pub to: SocketID,
 }
 
-#[async_trait]
-impl MutatingCommand<ProjectActor> for AddLink {
-    type Output = Result<Option<SocketID>>;
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_link(self.from, self.to)
-    }
-}
+// #[async_trait]
+// impl MutatingCommand<ProjectActor> for AddLink {
+//     type Output = Result<Option<SocketID>>;
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.add_link(self.from, self.to)
+//     }
+// }
 
 pub struct RemoveLink {
     pub from: SocketID,
     pub to: SocketID,
 }
-#[async_trait]
-impl MutatingCommand<ProjectActor> for RemoveLink {
-    type Output = Result<()>;
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_link(self.from, self.to)
-    }
-}
+// #[async_trait]
+// impl MutatingCommand<ProjectActor> for RemoveLink {
+//     type Output = Result<()>;
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.remove_link(self.from, self.to)
+//     }
+// }
 
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
@@ -142,25 +143,25 @@ impl<K: Kind> AddNodeInput<K> {
         }
     }
 }
-#[async_trait]
-impl<K: Kind> MutatingCommand<ProjectActor> for AddNodeInput<K> {
-    type Output = Result<SocketID>; // index of the newly created socket
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
-    }
-}
+// #[async_trait]
+// impl<K: Kind> MutatingCommand<ProjectActor> for AddNodeInput<K> {
+//     type Output = Result<SocketID>; // index of the newly created socket
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+//     }
+// }
 
 pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
 
-#[async_trait]
-impl MutatingCommand<ProjectActor> for RemoveNodeInput {
-    type Output = Result<()>;
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_node_input(self.node_id)
-    }
-}
+// #[async_trait]
+// impl MutatingCommand<ProjectActor> for RemoveNodeInput {
+//     type Output = Result<()>;
+//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
+//         project.remove_node_input(self.node_id)
+//     }
+// }
 
 impl ProjectActor {
     pub fn project(&self) -> &ProjectData {
