@@ -39,7 +39,7 @@ pub trait IntoEnvelope<A: Actor, P: Permission<A>>: Command<A, P> {
 pub struct Ref;
 pub struct Mutate;
 
-pub trait Permission<A: Actor> {
+pub trait Permission<A: Actor>: Send {
     type In<'r>;
     type Type<'r>;
 
@@ -63,7 +63,7 @@ impl<A: Actor> Permission<A> for Mutate {
     }
 }
 
-pub trait Command<A: Actor, P: Permission<A>>: Sized + Send + 'static {
+pub trait Command<A: Actor, P: Permission<A>>: Send + 'static {
     type Output: Send;
 
     fn execute(self, actor: <P as Permission<A>>::Type<'_>) -> Self::Output;
@@ -137,7 +137,6 @@ where
             command: self,
             reply,
             _actor: PhantomData,
-            // _perm: PhantomData,
         })
     }
 }
@@ -156,7 +155,6 @@ where
             command: self,
             reply,
             _actor: PhantomData,
-            // _perm: PhantomData,
         })
     }
 }

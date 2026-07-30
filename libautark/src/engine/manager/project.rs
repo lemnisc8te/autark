@@ -2,9 +2,6 @@ use crate::engine::manager::BoxedEnvelope;
 use crate::engine::manager::Carrier;
 use crate::engine::manager::Command;
 use crate::engine::manager::Mutate;
-use crate::engine::manager::Ref;
-use crate::model::arr::track::AudioTrack;
-use crate::model::arr::track::AudioTrackID;
 use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
@@ -26,7 +23,6 @@ use crate::{
 };
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
@@ -34,11 +30,15 @@ pub struct ProjectActor {
     pub(crate) redo_stack: Vec<ProjectData>,
 }
 
+pub trait ProjectCommand {}
+
 pub struct AddTrack<K: Kind> {
     pub name: String,
     pub kind: K,
     pub channels: u16,
 }
+
+impl<K: Kind> ProjectCommand for AddTrack<K> {}
 
 impl<K: Kind> Command<ProjectActor, Mutate> for AddTrack<K>
 where
@@ -52,6 +52,8 @@ where
 }
 
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
+
+impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
 impl<K: Kind> Command<ProjectActor, Mutate> for RemoveTrack<K> {
     type Output = Result<()>;
@@ -68,6 +70,8 @@ pub struct AddClip<K: Kind> {
     pub asset_id: <K::Asset as Stored>::Id,
 }
 
+impl<K: Kind> ProjectCommand for AddClip<K> {}
+
 impl<K: Kind> Command<ProjectActor, Mutate> for AddClip<K> {
     type Output = Result<<K::Clip as Stored>::Id>;
 
@@ -82,6 +86,8 @@ pub struct MoveClip<K: Kind> {
     pub new_start: Tick,
 }
 
+impl<K: Kind> ProjectCommand for MoveClip<K> {}
+
 impl<K: Kind> Command<ProjectActor, Mutate> for MoveClip<K> {
     type Output = Result<()>;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
@@ -92,6 +98,7 @@ impl<K: Kind> Command<ProjectActor, Mutate> for MoveClip<K> {
 pub struct AddNode<N: Node> {
     pub node: N,
 }
+impl<N: Node> ProjectCommand for AddNode<N> {}
 
 impl<N: Node> Command<ProjectActor, Mutate> for AddNode<N> {
     type Output = NodeID;
@@ -105,6 +112,8 @@ pub struct AddLink {
     pub to: SocketID,
 }
 
+impl ProjectCommand for AddLink {}
+
 impl Command<ProjectActor, Mutate> for AddLink {
     type Output = Result<Option<SocketID>>;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
@@ -116,16 +125,22 @@ pub struct RemoveLink {
     pub from: SocketID,
     pub to: SocketID,
 }
+
+impl ProjectCommand for RemoveLink {}
+
 impl Command<ProjectActor, Mutate> for RemoveLink {
     type Output = Result<()>;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_link(self.from, self.to)
     }
 }
+
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
     _p: PhantomData<K>,
 }
+
+impl<K: Kind> ProjectCommand for AddNodeInput<K> {}
 
 impl<K: Kind> AddNodeInput<K> {
     #[must_use]
@@ -148,6 +163,8 @@ pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
 
+impl ProjectCommand for RemoveNodeInput {}
+
 impl Command<ProjectActor, Mutate> for RemoveNodeInput {
     type Output = Result<()>;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
@@ -165,6 +182,14 @@ where
     pub id: <K::Track as Stored>::Id,
     _k: PhantomData<K>,
     _t: PhantomData<T>,
+}
+
+impl<K, F, T> ProjectCommand for MutateTrack<K, F, T>
+where
+    K: Kind,
+    F: FnOnce(&mut K::Track) -> T + Send,
+    T: Send,
+{
 }
 
 impl<K, F, T> Command<ProjectActor, Mutate> for MutateTrack<K, F, T>
@@ -249,7 +274,7 @@ impl ProjectActor {
 // #[async_trait]
 impl Actor for ProjectActor {
     type Data = ProjectData;
-    type InitParams = ();
+    type InitParams = ProjectData;
     type Envelope = BoxedEnvelope<Self>;
     fn pre_mutate(&mut self) {
         let next = self.current.clone();
@@ -264,9 +289,9 @@ impl Actor for ProjectActor {
         &mut self.current
     }
 
-    fn new(_: Self::InitParams) -> Self {
+    fn new(current: Self::InitParams) -> Self {
         Self {
-            current: ProjectData::new(),
+            current,
             undo_stack: vec![],
             redo_stack: vec![],
         }
