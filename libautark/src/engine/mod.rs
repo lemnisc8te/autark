@@ -13,7 +13,9 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::engine::constants::{DEFAULT_MANAGER_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES};
+use crate::engine::manager::asset::AssetTaskCarrier;
 use crate::engine::manager::audio::{AudioManager, AudioTaskCarrier};
+use crate::engine::manager::project::ProjectTaskCarrier;
 use crate::engine::manager::{Actor, Manager, StdManager, spawn_actor};
 use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
 use crate::engine::state::GraphUpdate;
@@ -63,10 +65,12 @@ impl Engine {
         // let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let (audio_h, x) =
+        let mut audio_h =
             StdManager::<AudioTaskCarrier>::spawn((config, playhead), DEFAULT_MANAGER_CAPACITY);
 
-        let v = audio_h.call_mut(manager::audio::UpdateCmd(GraphUpdate::default()));
+        let mut project_h = StdManager::<ProjectTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
+
+        let mut asset_h = StdManager::<AssetTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
         todo!()
     }

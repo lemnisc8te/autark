@@ -38,7 +38,6 @@ impl ProjectData {
         Self {
             tracks: SlotMap::with_key(),
             clips: SlotMap::with_key(),
-            assets: SlotMap::with_key(),
             graph,
             master_node_id,
         }

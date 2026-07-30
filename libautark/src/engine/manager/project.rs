@@ -1,9 +1,10 @@
 use crate::engine::manager::BoxedEnvelope;
 use crate::engine::manager::Carrier;
 use crate::engine::manager::Command;
-use crate::engine::manager::Manager;
 use crate::engine::manager::Mutate;
-use crate::engine::manager::Permission;
+use crate::engine::manager::Ref;
+use crate::model::arr::track::AudioTrack;
+use crate::model::arr::track::AudioTrackID;
 use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
@@ -37,24 +38,21 @@ pub struct AddTrack<K: Kind> {
     pub channels: u16,
 }
 
-impl<K: Kind> Command<ProjectActor> for AddTrack<K>
+impl<K: Kind> Command<ProjectActor, Mutate> for AddTrack<K>
 where
     TrackReader<K>: Node,
 {
-    type Perm = Mutate;
-
     type Output = ();
 
-    fn execute(self, project: <Self::Perm as Permission<ProjectActor>>::Type<'_>) -> Self::Output {
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
         let _ = project.add_track::<K>(self.name, self.channels);
     }
 }
 
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
 
-impl<K: Kind> Command<ProjectActor> for RemoveTrack<K> {
+impl<K: Kind> Command<ProjectActor, Mutate> for RemoveTrack<K> {
     type Output = Result<()>;
-    type Perm = Mutate;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_track::<K>(self.0)
@@ -68,9 +66,8 @@ pub struct AddClip<K: Kind> {
     pub asset_id: <K::Asset as Stored>::Id,
 }
 
-impl<K: Kind> Command<ProjectActor> for AddClip<K> {
+impl<K: Kind> Command<ProjectActor, Mutate> for AddClip<K> {
     type Output = Result<<K::Clip as Stored>::Id>;
-    type Perm = Mutate;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
@@ -83,9 +80,8 @@ pub struct MoveClip<K: Kind> {
     pub new_start: Tick,
 }
 
-impl<K: Kind> Command<ProjectActor> for MoveClip<K> {
+impl<K: Kind> Command<ProjectActor, Mutate> for MoveClip<K> {
     type Output = Result<()>;
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.move_clip::<K>(self.track, self.clip, self.new_start)
     }
@@ -95,9 +91,8 @@ pub struct AddNode<N: Node> {
     pub node: N,
 }
 
-impl<N: Node> Command<ProjectActor> for AddNode<N> {
+impl<N: Node> Command<ProjectActor, Mutate> for AddNode<N> {
     type Output = NodeID;
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.graph.add_node(self.node)
     }
@@ -108,9 +103,8 @@ pub struct AddLink {
     pub to: SocketID,
 }
 
-impl Command<ProjectActor> for AddLink {
+impl Command<ProjectActor, Mutate> for AddLink {
     type Output = Result<Option<SocketID>>;
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_link(self.from, self.to)
     }
@@ -120,9 +114,8 @@ pub struct RemoveLink {
     pub from: SocketID,
     pub to: SocketID,
 }
-impl Command<ProjectActor> for RemoveLink {
+impl Command<ProjectActor, Mutate> for RemoveLink {
     type Output = Result<()>;
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_link(self.from, self.to)
     }
@@ -142,9 +135,8 @@ impl<K: Kind> AddNodeInput<K> {
     }
 }
 
-impl<K: Kind> Command<ProjectActor> for AddNodeInput<K> {
+impl<K: Kind> Command<ProjectActor, Mutate> for AddNodeInput<K> {
     type Output = Result<SocketID>; // index of the newly created socket
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
     }
@@ -154,11 +146,22 @@ pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
 
-impl Command<ProjectActor> for RemoveNodeInput {
+impl Command<ProjectActor, Mutate> for RemoveNodeInput {
     type Output = Result<()>;
-    type Perm = Mutate;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_node_input(self.node_id)
+    }
+}
+
+pub struct GetTrack {
+    pub id: AudioTrackID,
+}
+
+impl Command<ProjectActor, Ref> for GetTrack {
+    type Output<'a> = Result<&'a AudioTrack>;
+
+    fn execute(self, project: &ProjectData) -> Self::Output {
+        project.tracks.get(self.id)
     }
 }
 
@@ -252,10 +255,10 @@ impl Actor for ProjectActor {
     }
 }
 
-struct ProjectCarrier;
+pub struct ProjectTaskCarrier;
 
 #[async_trait]
-impl Carrier<ProjectActor> for ProjectCarrier {
+impl Carrier<ProjectActor> for ProjectTaskCarrier {
     type Sender = flume::Sender<<ProjectActor as Actor>::Envelope>;
     type Receiver = flume::Receiver<<ProjectActor as Actor>::Envelope>;
 
@@ -270,21 +273,5 @@ impl Carrier<ProjectActor> for ProjectCarrier {
 
     fn recv(receiver: &mut Self::Receiver) -> Result<<ProjectActor as Actor>::Envelope> {
         Ok(receiver.recv()?)
-    }
-}
-
-pub struct ProjectManager {}
-
-impl Manager<ProjectActor> for ProjectManager {
-    type Carrier = ProjectCarrier;
-
-    fn spawn(
-        actor: <ProjectActor as Actor>::InitParams,
-        mailbox_capacity: usize,
-    ) -> (
-        super::Handle<ProjectActor, Self::Carrier>,
-        tokio::task::JoinHandle<ProjectActor>,
-    ) {
-        todo!()
     }
 }
