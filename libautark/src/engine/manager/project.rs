@@ -8,6 +8,7 @@ use crate::model::arr::track::AudioTrackID;
 use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
+use anyhow::anyhow;
 use async_trait::async_trait;
 
 use crate::{
@@ -25,6 +26,7 @@ use crate::{
 };
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
@@ -153,15 +155,31 @@ impl Command<ProjectActor, Mutate> for RemoveNodeInput {
     }
 }
 
-pub struct GetTrack {
-    pub id: AudioTrackID,
+pub struct MutateTrack<K, F, T>
+where
+    K: Kind,
+    F: FnOnce(&mut K::Track) -> T + Send,
+    T: Send,
+{
+    pub f: F,
+    pub id: <K::Track as Stored>::Id,
+    _k: PhantomData<K>,
+    _t: PhantomData<T>,
 }
 
-impl Command<ProjectActor, Ref> for GetTrack {
-    type Output<'a> = Result<&'a AudioTrack>;
+impl<K, F, T> Command<ProjectActor, Mutate> for MutateTrack<K, F, T>
+where
+    K: Kind,
+    F: FnOnce(&mut K::Track) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    type Output = Result<T>;
 
-    fn execute(self, project: &ProjectData) -> Self::Output {
-        project.tracks.get(self.id)
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        let the_ref = K::Track::access_mut(project)
+            .get_mut(self.id)
+            .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
+        Ok((self.f)(the_ref))
     }
 }
 

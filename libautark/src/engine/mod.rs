@@ -16,7 +16,7 @@ use crate::engine::constants::{DEFAULT_MANAGER_CAPACITY, MAX_BUFFER_SLOTS, MAX_N
 use crate::engine::manager::asset::AssetTaskCarrier;
 use crate::engine::manager::audio::{AudioManager, AudioTaskCarrier};
 use crate::engine::manager::project::ProjectTaskCarrier;
-use crate::engine::manager::{Actor, Manager, StdManager, spawn_actor};
+use crate::engine::manager::{Actor, Handle, Manager, StdManager, spawn_actor};
 use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
 use crate::engine::state::GraphUpdate;
 use crate::engine::transport::Transport;
@@ -42,11 +42,11 @@ pub struct CompiledGraph {
 }
 
 pub struct Engine {
-    pub transport: Arc<Transport>,
     pub playhead: Arc<AtomicU64>,
     config: EngineConfig,
-    project_manager: Arc<ProjectActor>,
-    audio_manager: AudioActor,
+    asset_h: Handle<manager::asset::AssetActor, AssetTaskCarrier>,
+    project_h: Handle<manager::project::ProjectActor, ProjectTaskCarrier>,
+    audio_h: Handle<manager::audio::AudioActor, AudioTaskCarrier>,
 }
 
 impl Engine {
@@ -70,7 +70,8 @@ impl Engine {
 
         let mut project_h = StdManager::<ProjectTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
-        let mut asset_h = StdManager::<AssetTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let mut asset_h: Handle<manager::asset::AssetActor, AssetTaskCarrier> =
+            StdManager::<AssetTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
         todo!()
     }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::{marker::PhantomData, thread};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{marker::PhantomData, pin::Pin, thread};
+use tokio::sync::oneshot;
 
 pub mod asset;
 pub mod audio;
@@ -33,41 +33,40 @@ pub trait IntoEnvelope<A: Actor, P: Permission<A>>: Command<A, P> {
     fn into_envelope<T, R>(self, reply: R) -> A::Envelope
     where
         T: Carrier<A>,
-        R: ReplyPort<Self::Output>;
+        R: ReplyPort<Self::Output> + 'static;
 }
 
 pub struct Ref;
 pub struct Mutate;
 
 pub trait Permission<A: Actor> {
-    type In<'a>;
-    type Type<'a>;
+    type In<'r>;
+    type Type<'r>;
 
     fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a>;
 }
 
 impl<A: Actor> Permission<A> for Ref {
-    type In<'a> = &'a A;
-    type Type<'a> = &'a A::Data;
+    type In<'r> = &'r A;
+    type Type<'r> = &'r A::Data;
 
     fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
         self_ref.data()
     }
 }
 impl<A: Actor> Permission<A> for Mutate {
-    type In<'a> = &'a mut A;
-    type Type<'a> = &'a mut A::Data;
+    type In<'r> = &'r mut A;
+    type Type<'r> = &'r mut A::Data;
 
     fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
         self_ref.data_mut()
     }
 }
 
-// #[async_trait]
 pub trait Command<A: Actor, P: Permission<A>>: Sized + Send + 'static {
     type Output: Send;
 
-    fn execute(self, actor: P::Type<'_>) -> Self::Output;
+    fn execute(self, actor: <P as Permission<A>>::Type<'_>) -> Self::Output;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -75,7 +74,7 @@ pub trait Command<A: Actor, P: Permission<A>>: Sized + Send + 'static {
 /// output afterward. `ReplyPort` is that axis, factored out as its own
 /// trait so it applies identically to `Command` and `MutatingCommand`
 /// instead of being duplicated (or half-supported) on each.
-pub trait ReplyPort<O: Send>: Send + 'static {
+pub trait ReplyPort<O: Send>: Send {
     fn send(self, output: O);
 }
 
@@ -110,7 +109,13 @@ impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
     }
 }
 
-struct StdEnvelope<A: Actor, P: Permission<A>, C: Command<A, P>, R: ReplyPort<C::Output>> {
+struct StdEnvelope<A, P, C, R>
+where
+    A: Actor,
+    P: Permission<A>,
+    C: Command<A, P>,
+    R: ReplyPort<C::Output>,
+{
     command: C,
     reply: R,
     _actor: PhantomData<fn(P) -> A>,
@@ -126,7 +131,7 @@ where
     where
         A: Actor,
         T: Carrier<A>,
-        R: ReplyPort<Self::Output>,
+        R: ReplyPort<Self::Output> + 'static,
     {
         Box::new(StdEnvelope {
             command: self,
@@ -144,9 +149,8 @@ where
 {
     fn into_envelope<T, R>(self, reply: R) -> A::Envelope
     where
-        A: Actor,
         T: Carrier<A>,
-        R: ReplyPort<Self::Output>,
+        R: ReplyPort<Self::Output> + 'static,
     {
         Box::new(StdEnvelope {
             command: self,
@@ -178,7 +182,7 @@ where
         let Self { command, reply, .. } = *self;
         actor.pre_mutate();
         let output = command.execute(actor.data_mut());
-        actor.post_mutate();
+        // actor.post_mutate();
         reply.send(output);
     }
 }
@@ -199,7 +203,7 @@ where
 /// that can move a `Box<dyn Envelope<A>>` from many producers to one
 /// consumer qualifies: a priority queue, an unbounded channel, a
 /// metrics-wrapped channel, etc.
-pub trait Carrier<A: Actor>: Send + 'static {
+pub trait Carrier<A: Actor>: Send {
     type Sender: Send + 'static;
     type Receiver: Send + 'static;
 
@@ -241,16 +245,35 @@ where
     }
 }
 
+pub struct CommandFuture<T> {
+    rx: oneshot::Receiver<T>,
+}
+
+impl<T> Future for CommandFuture<T> {
+    type Output = T;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<T> {
+        Pin::new(&mut self.rx)
+            .poll(cx)
+            .map(|r| r.expect("project thread dropped"))
+    }
+}
+
+impl<T> From<oneshot::Receiver<T>> for CommandFuture<T> {
+    fn from(value: oneshot::Receiver<T>) -> Self {
+        Self { rx: value }
+    }
+}
+
 impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a read-only `Command` and await its result.
-    pub async fn call<C>(&mut self, command: C) -> Result<C::Output>
+    pub async fn call<C>(&mut self, command: C) -> Result<CommandFuture<C::Output>>
     where
         C: IntoEnvelope<A, Ref>,
     {
         let (tx, rx) = oneshot::channel();
         let envelope = command.into_envelope::<T, _>(Reply(tx));
         T::send(&mut self.sender, envelope)?;
-        Ok(rx.await?)
+        Ok(rx.into())
     }
 
     /// Run a `Command` without waiting for (or even generating a
