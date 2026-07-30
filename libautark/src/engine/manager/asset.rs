@@ -2,11 +2,15 @@
 //! streaming/paging would only change this function's internals.
 
 use anyhow::Result;
+use slotmap::SlotMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::model::asset::AudioAsset;
+use crate::{
+    engine::manager::{Actor, BoxedEnvelope, Carrier},
+    model::asset::{AudioAsset, AudioAssetID},
+};
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
@@ -147,4 +151,54 @@ fn resample_rubato(interleaved: &[f32], channels: u16, from_rate: u32, to_rate: 
 
     println!("Processed {nbr_in} input frames into {nbr_out} output frames");
     outdata
+}
+
+#[derive(Debug, Default)]
+pub struct AssetRegistry {
+    pub audio: SlotMap<AudioAssetID, AudioAsset>,
+}
+
+#[derive(Debug, Default)]
+pub struct AssetActor {
+    reg: AssetRegistry,
+}
+
+impl Actor for AssetActor {
+    type InitParams = ();
+
+    type Data = AssetRegistry;
+
+    type Envelope = BoxedEnvelope<Self>;
+
+    fn new(_: Self::InitParams) -> Self {
+        Self::default()
+    }
+
+    fn data(&self) -> &Self::Data {
+        &self.reg
+    }
+
+    fn data_mut(&mut self) -> &mut Self::Data {
+        &mut self.reg
+    }
+}
+
+struct AssetCarrier;
+
+impl Carrier<AssetActor> for AssetCarrier {
+    type Sender = flume::Sender<<AssetActor as Actor>::Envelope>;
+    type Receiver = flume::Receiver<<AssetActor as Actor>::Envelope>;
+
+    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
+        flume::bounded(capacity)
+    }
+
+    fn send(sender: &mut Self::Sender, envelope: <AssetActor as Actor>::Envelope) -> Result<()> {
+        let _ = sender.send(envelope);
+        Ok(())
+    }
+
+    fn recv(receiver: &mut Self::Receiver) -> Result<<AssetActor as Actor>::Envelope> {
+        Ok(receiver.recv()?)
+    }
 }

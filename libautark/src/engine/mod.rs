@@ -9,17 +9,18 @@ pub mod state;
 pub mod tick;
 pub mod transport;
 
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::constants::{MAX_BUFFER_SLOTS, MAX_NODES};
+use crate::engine::constants::{DEFAULT_MANAGER_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES};
+use crate::engine::manager::audio::{AudioManager, AudioTaskCarrier};
+use crate::engine::manager::{Actor, Manager, StdManager, spawn_actor};
 use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
 use crate::engine::state::GraphUpdate;
 use crate::engine::transport::Transport;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 
-use crate::model::{asset::AudioAssetID, flow::NodeID, project::ProjectData};
+use crate::model::{flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
 
@@ -58,37 +59,16 @@ impl Engine {
     /// This function will return an error if .
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
         let config = EngineConfig::create()?;
-        let schedule = project.compile_graph()?;
-        assert!(
-            !(schedule.buffer_count > MAX_BUFFER_SLOTS || project.graph.nodes.len() > MAX_NODES),
-            "Graph is too large"
-        );
-
-        // Initial state for every node already in the fresh graph.
-        let state_additions: Vec<_> = project
-            .graph
-            .nodes
-            .iter()
-            .map(|(id, node)| (id, node.spawn_state()))
-            .collect();
 
         // let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let audio_manager = AudioActor::init(&config, playhead)?;
+        let (audio_h, x) =
+            StdManager::<AudioTaskCarrier>::spawn((config, playhead), DEFAULT_MANAGER_CAPACITY);
 
-        todo!();
-        // Ok(Self {
-        //     config,
-        //     playhead,
-        //     transport,
-        //     project_manager: Arc::new(ProjectActor {
-        //         current: project,
-        //         undo_stack: Vec::new(),
-        //         redo_stack: Vec::new(),
-        //     }),
-        //     audio_manager,
-        // })
+        let v = audio_h.call_mut(manager::audio::UpdateCmd(GraphUpdate::default()));
+
+        todo!()
     }
 
     pub fn project(&self) -> &ProjectData {

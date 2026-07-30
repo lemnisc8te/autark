@@ -13,7 +13,7 @@ use crate::{
         bbp::BlockBufferPool,
         constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
         engineconfig::EngineConfig,
-        manager::{self, Actor, Envelope, Manager, StdManager},
+        manager::{Actor, BoxedEnvelope, Carrier, Command, Manager, Mutate, StdManager},
         state::{Garbage, GraphUpdate, NodeStatePool},
         tick::Tick,
         transport::Transport,
@@ -22,9 +22,9 @@ use crate::{
 };
 
 pub struct AudioActor {
-    pub update_tx: rtrb::Producer<GraphUpdate>,
-    pub data: (),
-    transport: Arc<Transport>,
+    update_tx: rtrb::Producer<GraphUpdate>,
+    data: (),
+    pub transport: Arc<Transport>,
     _stream: cpal::Stream,
 }
 
@@ -160,21 +160,27 @@ impl AudioActor {
     }
 }
 
-pub enum AudioActorEnvelope {
-    Transport(Transport),
-    Update(GraphUpdate),
+pub struct TransportCmd(pub Transport);
+
+impl Command<AudioActor> for TransportCmd {
+    type Perm = Mutate;
+
+    type Output = ();
+
+    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+        actor.transport.replace(self.0)
+    }
 }
 
-impl Envelope<AudioActor> for AudioActorEnvelope {
-    fn handle(self: Box<Self>, actor: &mut AudioActor) {
-        match *self {
-            Self::Transport(transport) => {
-                actor.transport.replace(transport);
-            }
-            Self::Update(graph_update) => {
-                let _ = actor.update_tx.push(graph_update);
-            }
-        }
+pub struct UpdateCmd(pub GraphUpdate);
+
+impl Command<AudioActor> for UpdateCmd {
+    type Perm = Mutate;
+
+    type Output = ();
+
+    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+        actor.update_tx.push(self.0);
     }
 }
 
@@ -182,30 +188,30 @@ impl Envelope<AudioActor> for AudioActorEnvelope {
 impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
     /// The audio stream is inaccessible
-    type Data = ();
-    type Envelope = AudioActorEnvelope;
+    type Data = Self;
+    type Envelope = BoxedEnvelope<Self>;
 
     fn new((config, playhead): Self::InitParams) -> Self {
         Self::init(&config, playhead).unwrap()
     }
 
     fn data(&self) -> &Self::Data {
-        &self.data
+        self
     }
 
     fn data_mut(&mut self) -> &mut Self::Data {
-        &mut self.data
+        self
     }
 }
 
 pub struct AudioManager {}
 
-pub struct AudioTaskTransport {}
+pub struct AudioTaskCarrier {}
 
 #[async_trait]
-impl manager::Transport<AudioActor> for AudioTaskTransport {
-    type Sender = rtrb::Producer<AudioActorEnvelope>;
-    type Receiver = rtrb::Consumer<AudioActorEnvelope>;
+impl Carrier<AudioActor> for AudioTaskCarrier {
+    type Sender = rtrb::Producer<BoxedEnvelope<AudioActor>>;
+    type Receiver = rtrb::Consumer<BoxedEnvelope<AudioActor>>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
         rtrb::RingBuffer::new(capacity)
@@ -223,5 +229,5 @@ impl manager::Transport<AudioActor> for AudioTaskTransport {
 }
 
 fn test(params: <AudioActor as Actor>::InitParams) {
-    let m = StdManager::<AudioTaskTransport>::spawn(params, 0);
+    let m = StdManager::<AudioTaskCarrier>::spawn(params, 0);
 }

@@ -1,9 +1,9 @@
 use crate::engine::manager::BoxedEnvelope;
+use crate::engine::manager::Carrier;
 use crate::engine::manager::Command;
 use crate::engine::manager::Manager;
 use crate::engine::manager::Mutate;
 use crate::engine::manager::Permission;
-use crate::engine::manager::Transport;
 use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
@@ -252,10 +252,10 @@ impl Actor for ProjectActor {
     }
 }
 
-pub struct ProjectTransport {}
+struct ProjectCarrier;
 
 #[async_trait]
-impl Transport<ProjectActor> for ProjectTransport {
+impl Carrier<ProjectActor> for ProjectCarrier {
     type Sender = flume::Sender<<ProjectActor as Actor>::Envelope>;
     type Receiver = flume::Receiver<<ProjectActor as Actor>::Envelope>;
 
@@ -276,13 +276,13 @@ impl Transport<ProjectActor> for ProjectTransport {
 pub struct ProjectManager {}
 
 impl Manager<ProjectActor> for ProjectManager {
-    type Transport = ProjectTransport;
+    type Carrier = ProjectCarrier;
 
     fn spawn(
         actor: <ProjectActor as Actor>::InitParams,
         mailbox_capacity: usize,
     ) -> (
-        super::Handle<ProjectActor, Self::Transport>,
+        super::Handle<ProjectActor, Self::Carrier>,
         tokio::task::JoinHandle<ProjectActor>,
     ) {
         todo!()

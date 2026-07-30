@@ -15,7 +15,6 @@ use crate::{
             nodes::{master::Master, trackreader::TrackReader},
             socket::{Socket, SocketDirection, SocketID, SocketMeta},
         },
-        project,
     },
 };
 use anyhow::Result;
@@ -26,7 +25,6 @@ use slotmap::SlotMap;
 pub struct ProjectData {
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
     pub clips: SlotMap<AudioClipID, AudioClip>,
-    pub assets: SlotMap<AudioAssetID, AudioAsset>,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
 }
