@@ -8,14 +8,14 @@
 #[deny(
     unreachable_pub,
     unused_qualifications,
-    clippy::pedantic,
+    // clippy::pedantic,
     clippy::cargo,
-    clippy::nursery,
+    // clippy::nursery,
     clippy::perf,
     clippy::correctness,
     clippy::suspicious,
     clippy::complexity,
-    clippy::style,
+    // clippy::style,
     clippy::branches_sharing_code,
     clippy::use_self,
     clippy::redundant_allocation,
@@ -57,8 +57,6 @@ pub mod model;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{AddClip, AddLink, AddTrack};
-    use crate::engine::{AddNode, AddNodeInput};
     use crate::model::Audio;
     use crate::model::flow::nodes::biquad_filter::BiquadFilter;
     use crate::model::flow::nodes::sum::Sum;

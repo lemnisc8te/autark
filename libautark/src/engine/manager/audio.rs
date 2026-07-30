@@ -160,17 +160,21 @@ impl AudioActor {
     }
 }
 
-#[async_trait]
-impl Envelope<AudioActor> for GraphUpdate {
-    async fn handle(self, actor: &mut AudioActor) {
-        actor.update_tx.push(self);
-    }
+pub enum AudioActorEnvelope {
+    Transport(Transport),
+    Update(GraphUpdate),
 }
 
-#[async_trait]
-impl Envelope<AudioActor> for Transport {
-    async fn handle(self, actor: &mut AudioActor) {
-        actor.transport.replace(self);
+impl Envelope<AudioActor> for AudioActorEnvelope {
+    fn handle(self: Box<Self>, actor: &mut AudioActor) {
+        match *self {
+            Self::Transport(transport) => {
+                actor.transport.replace(transport);
+            }
+            Self::Update(graph_update) => {
+                let _ = actor.update_tx.push(graph_update);
+            }
+        }
     }
 }
 
@@ -179,6 +183,7 @@ impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
     /// The audio stream is inaccessible
     type Data = ();
+    type Envelope = AudioActorEnvelope;
 
     fn new((config, playhead): Self::InitParams) -> Self {
         Self::init(&config, playhead).unwrap()
@@ -198,21 +203,21 @@ pub struct AudioManager {}
 pub struct AudioTaskTransport {}
 
 #[async_trait]
-impl manager::Transport<AudioActor, GraphUpdate> for AudioTaskTransport {
-    type Sender = rtrb::Producer<GraphUpdate>;
-    type Receiver = rtrb::Consumer<GraphUpdate>;
+impl manager::Transport<AudioActor> for AudioTaskTransport {
+    type Sender = rtrb::Producer<AudioActorEnvelope>;
+    type Receiver = rtrb::Consumer<AudioActorEnvelope>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
         rtrb::RingBuffer::new(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: GraphUpdate) -> Result<()> {
+    fn send(sender: &mut Self::Sender, envelope: <AudioActor as Actor>::Envelope) -> Result<()> {
         let _ = sender.push(envelope);
         Ok(())
     }
 
     /// Awaits the next envelope, or `None` once the transport is closed.
-    fn recv(receiver: &mut Self::Receiver) -> Result<GraphUpdate> {
+    fn recv(receiver: &mut Self::Receiver) -> Result<<AudioActor as Actor>::Envelope> {
         Ok(receiver.pop()?)
     }
 }

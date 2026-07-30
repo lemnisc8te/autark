@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use slotmap::SecondaryMap;
 
 use crate::{
-    engine::{CompiledGraph, constants::MAX_NODES, manager::QueryCommand},
+    engine::{CompiledGraph, constants::MAX_NODES},
     model::{flow::NodeID, project::ProjectData},
 };
 
@@ -13,7 +13,7 @@ use crate::{
 #[derive(Default)]
 pub struct GraphUpdate {
     pub project: Arc<ProjectData>,
-    pub schedule: CompiledGraph>,
+    pub schedule: CompiledGraph,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,
 }

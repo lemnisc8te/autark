@@ -11,8 +11,8 @@ pub mod project;
 pub trait Actor: Send + 'static + Sized {
     type InitParams;
     type Data;
-    // type Envelope: Envelope<Self>;
-    fn new(p: Self::InitParams) -> Self;
+    type Envelope: Envelope<Self>;
+    fn new(params: Self::InitParams) -> Self;
 
     /// Run once before the first command is processed.
     async fn on_start(&mut self) {}
@@ -30,63 +30,41 @@ pub trait Actor: Send + 'static + Sized {
 }
 
 pub trait IntoEnvelope<A: Actor>: Command<A> {
-    fn into_envelope<T: Transport<A, impl Envelope<A>>, R: ReplyPort<Self::Output>>(
-        self,
-        reply: R,
-    ) -> impl Envelope<A>;
+    fn into_envelope<T: Transport<A>, R: ReplyPort<Self::Output>>(self, reply: R) -> A::Envelope;
 }
 
 pub struct Ref;
 pub struct Mutate;
 
-trait Permission<A: Actor> {
+pub trait Permission<A: Actor> {
     type In<'a>;
     type Type<'a>;
-    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a>;
+    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a>;
 }
 
 impl<A: Actor> Permission<A> for Ref {
     type In<'a> = &'a A;
     type Type<'a> = &'a A::Data;
 
-    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a> {
-        a.data()
+    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
+        self_ref.data()
     }
 }
 impl<A: Actor> Permission<A> for Mutate {
     type In<'a> = &'a mut A;
     type Type<'a> = &'a mut A::Data;
 
-    fn into_data<'a>(&self, a: Self::In<'a>) -> Self::Type<'a> {
-        a.data_mut()
+    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
+        self_ref.data_mut()
     }
 }
 
 // #[async_trait]
-trait Command<A: Actor>: Sized + Send + 'static {
+pub trait Command<A: Actor>: Sized + Send + 'static {
     type Perm: Permission<A>;
     type Output: Send + 'static;
 
     fn execute(self, actor: <Self::Perm as Permission<A>>::Type<'_>) -> Self::Output;
-}
-
-impl<A: Actor, C> IntoEnvelope<A> for C
-where
-    C: Command<A, Perm = Ref>,
-{
-    fn into_envelope<T: Transport<A, impl Envelope<A>>, R: ReplyPort<Self::Output>>(
-        self,
-        reply: R,
-    ) -> impl Envelope<A>
-    where
-        A: Actor,
-    {
-        StdEnvelope {
-            command: self,
-            reply,
-            _actor: PhantomData,
-        }
-    }
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -116,12 +94,18 @@ impl<O: Send + 'static> ReplyPort<O> for NoReply {
     fn send(self, _output: O) {}
 }
 
-#[async_trait]
+// #[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    async fn handle(self, actor: &mut A);
+    fn handle(self: Box<Self>, actor: &mut A);
 }
 
 pub type BoxedEnvelope<A: Actor> = Box<dyn Envelope<A>>;
+
+impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
+    fn handle(self: Box<Self>, actor: &mut A) {
+        (*self).handle(actor);
+    }
+}
 
 struct StdEnvelope<A: Actor, P: Permission<A>, C: Command<A, Perm = P>, R: ReplyPort<C::Output>> {
     command: C,
@@ -129,35 +113,29 @@ struct StdEnvelope<A: Actor, P: Permission<A>, C: Command<A, Perm = P>, R: Reply
     _actor: PhantomData<fn() -> A>,
 }
 
-#[async_trait]
 impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Ref, C, R>
 where
     C: Command<A, Perm = Ref>,
     R: ReplyPort<C::Output>,
 {
-    async fn handle(self, actor: &mut A) {
-        todo!()
+    fn handle(self: Box<Self>, actor: &mut A) {
+        let Self { command, reply, .. } = *self;
+        let output = command.execute(actor.data_mut());
+        reply.send(output);
     }
 }
 
-#[async_trait]
 impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Mutate, C, R>
 where
     C: Command<A, Perm = Mutate>,
     R: ReplyPort<C::Output>,
 {
-    async fn handle(self, actor: &mut A) {
-        let Self { command, reply, .. } = self;
+    fn handle(self: Box<Self>, actor: &mut A) {
+        let Self { command, reply, .. } = *self;
         actor.pre_mutate();
         let output = command.execute(actor.data_mut());
         actor.post_mutate();
         reply.send(output);
-    }
-}
-
-impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn handle(self: Box<Self>, actor: &mut A) {
-        self.handle(actor);
     }
 }
 
@@ -167,40 +145,49 @@ impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
 /// consumer qualifies: a priority queue, an unbounded channel, a
 /// metrics-wrapped channel, etc.
 #[async_trait]
-pub trait Transport<A: Actor, E: Envelope<A>>: Send + 'static {
+pub trait Transport<A: Actor>: Send + 'static {
     type Sender: Send + 'static;
     type Receiver: Send + 'static;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver);
 
-    fn send(sender: &mut Self::Sender, envelope: impl Envelope<A>) -> Result<()>;
+    /// Send a message over the channel.
+    ///
+    /// # Errors
+    /// - Implementation specific
+    fn send(sender: &mut Self::Sender, envelope: A::Envelope) -> Result<()>;
 
     /// Awaits the next envelope, or `None` once the transport is closed.
-    fn recv(receiver: &mut Self::Receiver) -> Result<impl Envelope<A>>;
+    ///
+    /// # Errors
+    /// - Implementation Specific
+    fn recv(receiver: &mut Self::Receiver) -> Result<A::Envelope>;
 }
 
-/// A cloneable, `Send + Sync` handle to a running actor. This is what
+/// A cloneable, `Send + Sync` handle to a running actor.
+///
+/// This is what
 /// the rest of the world holds and calls; it never sees the actor's
 /// concrete state, only the commands it accepts. Each command type gets
 /// two entry points — one that replies (`call*`), one that doesn't
 /// (`notify` / `cast_mut`) — both funneling into the same `Envelope`
 /// generic over `ReplyPort`.
-pub struct Handle<A: Actor, T: Transport<A, E>, E: Envelope<A>> {
+pub struct Handle<A: Actor, T: Transport<A>> {
     sender: T::Sender,
 }
 
-impl<A: Actor, T: Transport<A, E>, E: Envelope<A>> Clone for Handle<A, T, E>
+impl<A: Actor, T: Transport<A>> Clone for Handle<A, T>
 where
     T::Sender: Clone,
 {
     fn clone(&self) -> Self {
-        Handle {
+        Self {
             sender: self.sender.clone(),
         }
     }
 }
 
-impl<A: Actor, T: Transport<A, E>, E: Envelope<A>> Handle<A, T, E> {
+impl<A: Actor, T: Transport<A>> Handle<A, T> {
     /// Run a read-only `Command` and await its result.
     pub async fn call<C>(&mut self, command: C) -> Result<C::Output>
     where
@@ -250,15 +237,14 @@ impl<A: Actor, T: Transport<A, E>, E: Envelope<A>> Handle<A, T, E> {
 /// restart-on-panic, metrics, tracing spans, backpressure policy, etc.,
 /// all while keeping the same `spawn` signature.
 pub trait Manager<A: Actor> {
-    type Envelope: Envelope<A>;
-    type Transport: Transport<A, Self::Envelope>;
+    type Transport: Transport<A>;
     /// Spawn `actor` onto its own tokio task. Returns a cloneable
     /// `Handle` for sending it commands, and a `JoinHandle` that
     /// resolves to the actor's final state once its mailbox closes.
     fn spawn(
         params: A::InitParams,
         mailbox_capacity: usize,
-    ) -> (Handle<A, Self::Transport, Self::Envelope>, JoinHandle<A>);
+    ) -> (Handle<A, Self::Transport>, JoinHandle<A>);
 }
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
@@ -268,15 +254,11 @@ pub struct StdManager<T>(PhantomData<T>);
 impl<A, T> Manager<A> for StdManager<T>
 where
     A: Actor,
-    T: Transport<A, BoxedEnvelope<A>>,
+    T: Transport<A>,
 {
-    type Envelope = BoxedEnvelope<A>;
     type Transport = T;
 
-    fn spawn(
-        params: A::InitParams,
-        mailbox_capacity: usize,
-    ) -> (Handle<A, T, BoxedEnvelope<A>>, JoinHandle<A>) {
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A, T>, JoinHandle<A>) {
         let mut actor = A::new(params);
         let (sender, mut receiver) = T::pair(mailbox_capacity);
 
@@ -287,7 +269,7 @@ where
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
             while let Ok(envelope) = T::recv(&mut receiver) {
-                envelope.handle(&mut actor).await;
+                Box::new(envelope).handle(&mut actor);
             }
 
             actor.on_stop().await;

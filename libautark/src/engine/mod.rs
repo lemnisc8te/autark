@@ -72,17 +72,10 @@ impl Engine {
             .map(|(id, node)| (id, node.spawn_state()))
             .collect();
 
-        let init_update = GraphUpdate {
-            project: project.clone(),
-            schedule: Arc::new(schedule),
-            state_additions,
-            state_removals: Vec::new(),
-        };
-        let transport = Arc::new(Transport::default());
+        // let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let audio_manager =
-            AudioActor::init(init_update, &config, transport.clone(), playhead.clone())?;
+        let audio_manager = AudioActor::init(&config, playhead)?;
 
         todo!();
         // Ok(Self {

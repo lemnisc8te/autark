@@ -3,8 +3,8 @@ use crate::engine::manager::Command;
 use crate::engine::manager::Manager;
 use crate::engine::manager::Mutate;
 use crate::engine::manager::Permission;
-use crate::engine::manager::ReplyPort;
 use crate::engine::manager::Transport;
+use crate::model::flow::socket::Socket;
 use crate::model::flow::socket::SocketID;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -24,7 +24,6 @@ use crate::{
 };
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
@@ -46,21 +45,21 @@ where
 
     type Output = ();
 
-    async fn execute(self, project: <Self::Perm as Permission<ProjectActor>>::Type<'_>) {
-        project.add_track::<K>(self.name, self.channels);
+    fn execute(self, project: <Self::Perm as Permission<ProjectActor>>::Type<'_>) -> Self::Output {
+        let _ = project.add_track::<K>(self.name, self.channels);
     }
 }
 
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
 
-// #[async_trait]
-// impl<K: Kind> MutatingCommand<ProjectActor> for RemoveTrack<K> {
-//     type Output = Result<()>;
+impl<K: Kind> Command<ProjectActor> for RemoveTrack<K> {
+    type Output = Result<()>;
+    type Perm = Mutate;
 
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.remove_track::<K>(self.0)
-//     }
-// }
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.remove_track::<K>(self.0)
+    }
+}
 
 pub struct AddClip<K: Kind> {
     pub track: <K::Track as Stored>::Id,
@@ -69,14 +68,14 @@ pub struct AddClip<K: Kind> {
     pub asset_id: <K::Asset as Stored>::Id,
 }
 
-// #[async_trait]
-// impl<K: Kind> MutatingCommand<ProjectActor> for AddClip<K> {
-//     type Output = Result<<K::Clip as Stored>::Id>;
+impl<K: Kind> Command<ProjectActor> for AddClip<K> {
+    type Output = Result<<K::Clip as Stored>::Id>;
+    type Perm = Mutate;
 
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
-//     }
-// }
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
+    }
+}
 
 pub struct MoveClip<K: Kind> {
     pub track: <K::Track as Stored>::Id,
@@ -84,51 +83,50 @@ pub struct MoveClip<K: Kind> {
     pub new_start: Tick,
 }
 
-// #[async_trait]
-// impl<K: Kind> MutatingCommand<ProjectActor> for MoveClip<K> {
-//     type Output = Result<()>;
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.move_clip::<K>(self.track, self.clip, self.new_start)
-//     }
-// }
+impl<K: Kind> Command<ProjectActor> for MoveClip<K> {
+    type Output = Result<()>;
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.move_clip::<K>(self.track, self.clip, self.new_start)
+    }
+}
 
 pub struct AddNode<N: Node> {
     pub node: N,
 }
 
-// #[async_trait]
-// impl<N: Node> MutatingCommand<ProjectActor> for AddNode<N> {
-//     type Output = NodeID;
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.graph.add_node(self.node)
-//     }
-// }
+impl<N: Node> Command<ProjectActor> for AddNode<N> {
+    type Output = NodeID;
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.graph.add_node(self.node)
+    }
+}
 
 pub struct AddLink {
     pub from: SocketID,
     pub to: SocketID,
 }
 
-// #[async_trait]
-// impl MutatingCommand<ProjectActor> for AddLink {
-//     type Output = Result<Option<SocketID>>;
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.add_link(self.from, self.to)
-//     }
-// }
+impl Command<ProjectActor> for AddLink {
+    type Output = Result<Option<SocketID>>;
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.add_link(self.from, self.to)
+    }
+}
 
 pub struct RemoveLink {
     pub from: SocketID,
     pub to: SocketID,
 }
-// #[async_trait]
-// impl MutatingCommand<ProjectActor> for RemoveLink {
-//     type Output = Result<()>;
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.remove_link(self.from, self.to)
-//     }
-// }
-
+impl Command<ProjectActor> for RemoveLink {
+    type Output = Result<()>;
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.remove_link(self.from, self.to)
+    }
+}
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
     _p: PhantomData<K>,
@@ -143,28 +141,29 @@ impl<K: Kind> AddNodeInput<K> {
         }
     }
 }
-// #[async_trait]
-// impl<K: Kind> MutatingCommand<ProjectActor> for AddNodeInput<K> {
-//     type Output = Result<SocketID>; // index of the newly created socket
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
-//     }
-// }
+
+impl<K: Kind> Command<ProjectActor> for AddNodeInput<K> {
+    type Output = Result<SocketID>; // index of the newly created socket
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+    }
+}
 
 pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
 
-// #[async_trait]
-// impl MutatingCommand<ProjectActor> for RemoveNodeInput {
-//     type Output = Result<()>;
-//     async fn execute(self, project: &mut ProjectData) -> Self::Output {
-//         project.remove_node_input(self.node_id)
-//     }
-// }
+impl Command<ProjectActor> for RemoveNodeInput {
+    type Output = Result<()>;
+    type Perm = Mutate;
+    fn execute(self, project: &mut ProjectData) -> Self::Output {
+        project.remove_node_input(self.node_id)
+    }
+}
 
 impl ProjectActor {
-    pub fn project(&self) -> &ProjectData {
+    pub const fn project(&self) -> &ProjectData {
         &self.current
     }
 
@@ -184,7 +183,7 @@ impl ProjectActor {
         }
     }
 
-    pub(crate) fn commit(&mut self, next: ProjectData) {
+    pub fn commit(&mut self, next: ProjectData) {
         let previous_commit = std::mem::replace(&mut self.current, next);
         self.undo_stack.push(previous_commit);
         self.redo_stack.clear();
@@ -192,11 +191,8 @@ impl ProjectActor {
     }
 
     /// Builds the next `GraphUpdate`
-    fn publish_current(&mut self) -> Result<GraphUpdate> {
-        let schedule = self
-            .project()
-            .compile_graph()
-            .expect("command validation prevents cycles");
+    fn publish_current(&self) -> Result<GraphUpdate> {
+        let schedule = self.project().compile_graph()?;
 
         if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
         {
@@ -222,16 +218,18 @@ impl ProjectActor {
 
         Ok(GraphUpdate {
             project: self.project().clone().into(),
-            schedule: Arc::new(schedule),
+            schedule,
             state_additions,
             state_removals,
         })
     }
 }
 
-#[async_trait]
+// #[async_trait]
 impl Actor for ProjectActor {
     type Data = ProjectData;
+    type InitParams = ();
+    type Envelope = BoxedEnvelope<Self>;
     fn pre_mutate(&mut self) {
         let next = self.current.clone();
         self.commit(next);
@@ -244,26 +242,33 @@ impl Actor for ProjectActor {
     fn data_mut(&mut self) -> &mut Self::Data {
         &mut self.current
     }
+
+    fn new(_: Self::InitParams) -> Self {
+        Self {
+            current: ProjectData::new(),
+            undo_stack: vec![],
+            redo_stack: vec![],
+        }
+    }
 }
 
 pub struct ProjectTransport {}
 
 #[async_trait]
 impl Transport<ProjectActor> for ProjectTransport {
-    type Data = BoxedEnvelope<ProjectActor>;
-    type Sender = flume::Sender<Self::Data>;
-    type Receiver = flume::Receiver<Self::Data>;
+    type Sender = flume::Sender<<ProjectActor as Actor>::Envelope>;
+    type Receiver = flume::Receiver<<ProjectActor as Actor>::Envelope>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
         flume::bounded(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: Self::Data) -> Result<()> {
+    fn send(sender: &mut Self::Sender, envelope: <ProjectActor as Actor>::Envelope) -> Result<()> {
         let _ = sender.send(envelope);
         Ok(())
     }
 
-    fn recv(receiver: &mut Self::Receiver) -> Result<Self::Data> {
+    fn recv(receiver: &mut Self::Receiver) -> Result<<ProjectActor as Actor>::Envelope> {
         Ok(receiver.recv()?)
     }
 }
@@ -274,7 +279,7 @@ impl Manager<ProjectActor> for ProjectManager {
     type Transport = ProjectTransport;
 
     fn spawn(
-        actor: ProjectActor,
+        actor: <ProjectActor as Actor>::InitParams,
         mailbox_capacity: usize,
     ) -> (
         super::Handle<ProjectActor, Self::Transport>,
