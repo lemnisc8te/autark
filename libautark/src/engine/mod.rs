@@ -9,29 +9,23 @@ pub mod state;
 pub mod tick;
 pub mod transport;
 
-use std::any::Any;
-use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
-use std::thread;
 
-use crate::engine::constants::{DEFAULT_MANAGER_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES};
-use crate::engine::manager::asset::AssetTaskCarrier;
-use crate::engine::manager::audio::{AudioManager, AudioTaskCarrier};
-use crate::engine::manager::project::{ProjectCommand, ProjectTaskCarrier};
-use crate::engine::manager::{
-    Actor, BoxedEnvelope, Carrier, Command, Envelope, Handle, IntoEnvelope, Manager, Permission,
-    Ref, StdManager, spawn_actor,
+use crate::{
+    engine::{
+        constants::DEFAULT_MANAGER_CAPACITY,
+        engineconfig::EngineConfig,
+        manager::{
+            Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Ref, StdManager,
+            asset::AssetTaskCarrier, audio::AudioTaskCarrier, project::ProjectTaskCarrier,
+        },
+        tick::Tick,
+    },
+    model::{flow::NodeID, project::ProjectData},
 };
-use crate::engine::manager::{audio::AudioActor, project::ProjectActor};
-use crate::engine::state::GraphUpdate;
-use crate::engine::transport::Transport;
-use crate::engine::{engineconfig::EngineConfig, tick::Tick};
-
-use crate::model::{flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
-use tokio::sync::oneshot;
 
 pub type SlotIndex = usize;
 
@@ -105,39 +99,50 @@ impl Engine {
     }
 }
 
-struct Message<A: Actor, C: IntoEnvelope<A, Ref>> {
-    c: C,
-    _a: PhantomData<A>,
+// engine/mod.rs
+pub trait HasHandle<A: Actor> {
+    type Carrier: Carrier<A>;
+    fn handle_mut(&mut self) -> &mut Handle<A, Self::Carrier>;
 }
 
-// impl<A, C> Command<Engine, Ref> for Message<A,  C>
-// where
-//     A: Actor,
-//     C: Command<A, Ref>,
-// {
-//     type Output = C::Output;
+impl HasHandle<manager::project::ProjectActor> for Engine {
+    type Carrier = ProjectTaskCarrier;
+    fn handle_mut(&mut self) -> &mut Handle<manager::project::ProjectActor, ProjectTaskCarrier> {
+        &mut self.project_h
+    }
+}
+impl HasHandle<manager::asset::AssetActor> for Engine {
+    type Carrier = AssetTaskCarrier;
+    fn handle_mut(&mut self) -> &mut Handle<manager::asset::AssetActor, AssetTaskCarrier> {
+        &mut self.asset_h
+    }
+}
+impl HasHandle<manager::audio::AudioActor> for Engine {
+    type Carrier = AudioTaskCarrier;
+    fn handle_mut(&mut self) -> &mut Handle<manager::audio::AudioActor, AudioTaskCarrier> {
+        &mut self.audio_h
+    }
+}
 
-//     fn execute(self, engine: &Engine) -> Self::Output {
-//         engine.
-//     }
-// }
-
-impl Actor for Engine {
-    type InitParams = ProjectData;
-
-    type Data = Self;
-
-    type Envelope = BoxedEnvelope<Self>;
-
-    fn new(params: Self::InitParams) -> Self {
-        todo!()
+impl Engine {
+    pub async fn call<C>(&mut self, command: C) -> Result<C::Output>
+    where
+        C: Command<Ref> + IntoEnvelope<Ref>,
+        Self: HasHandle<C::Actor>,
+    {
+        Ok(HasHandle::<C::Actor>::handle_mut(self)
+            .call(command)
+            .await?
+            .await)
     }
 
-    fn data(&self) -> &Self::Data {
-        todo!()
-    }
-
-    fn data_mut(&mut self) -> &mut Self::Data {
-        todo!()
+    pub async fn call_mut<C>(&mut self, command: C) -> Result<C::Output>
+    where
+        C: Command<Mutate> + IntoEnvelope<Mutate>,
+        Self: HasHandle<C::Actor>,
+    {
+        HasHandle::<C::Actor>::handle_mut(self)
+            .call_mut(command)
+            .await
     }
 }

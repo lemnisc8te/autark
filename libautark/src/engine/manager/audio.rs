@@ -162,7 +162,8 @@ impl AudioActor {
 
 pub struct TransportCmd(pub Transport);
 
-impl Command<AudioActor, Mutate> for TransportCmd {
+impl Command<Mutate> for TransportCmd {
+    type Actor = AudioActor;
     type Output = ();
 
     fn execute(self, actor: &mut AudioActor) -> Self::Output {
@@ -172,8 +173,9 @@ impl Command<AudioActor, Mutate> for TransportCmd {
 
 pub struct UpdateCmd(pub GraphUpdate);
 
-impl Command<AudioActor, Mutate> for UpdateCmd {
+impl Command<Mutate> for UpdateCmd {
     type Output = ();
+    type Actor = AudioActor;
 
     fn execute(self, actor: &mut AudioActor) -> Self::Output {
         actor.update_tx.push(self.0);

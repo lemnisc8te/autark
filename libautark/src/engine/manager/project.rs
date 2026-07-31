@@ -1,9 +1,7 @@
-use crate::engine::manager::BoxedEnvelope;
-use crate::engine::manager::Carrier;
-use crate::engine::manager::Command;
-use crate::engine::manager::Mutate;
-use crate::model::flow::socket::Socket;
-use crate::model::flow::socket::SocketID;
+use crate::{
+    engine::manager::{BoxedEnvelope, Carrier, Command, Mutate},
+    model::flow::socket::{Socket, SocketID},
+};
 use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -40,11 +38,12 @@ pub struct AddTrack<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddTrack<K> {}
 
-impl<K: Kind> Command<ProjectActor, Mutate> for AddTrack<K>
+impl<K: Kind> Command<Mutate> for AddTrack<K>
 where
     TrackReader<K>: Node,
 {
     type Output = ();
+    type Actor = ProjectActor;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         let _ = project.add_track::<K>(self.name, self.channels);
@@ -55,8 +54,9 @@ pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
 
 impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
-impl<K: Kind> Command<ProjectActor, Mutate> for RemoveTrack<K> {
+impl<K: Kind> Command<Mutate> for RemoveTrack<K> {
     type Output = Result<()>;
+    type Actor = ProjectActor;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_track::<K>(self.0)
@@ -72,8 +72,9 @@ pub struct AddClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddClip<K> {}
 
-impl<K: Kind> Command<ProjectActor, Mutate> for AddClip<K> {
+impl<K: Kind> Command<Mutate> for AddClip<K> {
     type Output = Result<<K::Clip as Stored>::Id>;
+    type Actor = ProjectActor;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
@@ -88,8 +89,10 @@ pub struct MoveClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for MoveClip<K> {}
 
-impl<K: Kind> Command<ProjectActor, Mutate> for MoveClip<K> {
+impl<K: Kind> Command<Mutate> for MoveClip<K> {
     type Output = Result<()>;
+    type Actor = ProjectActor;
+
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.move_clip::<K>(self.track, self.clip, self.new_start)
     }
@@ -100,8 +103,10 @@ pub struct AddNode<N: Node> {
 }
 impl<N: Node> ProjectCommand for AddNode<N> {}
 
-impl<N: Node> Command<ProjectActor, Mutate> for AddNode<N> {
+impl<N: Node> Command<Mutate> for AddNode<N> {
     type Output = NodeID;
+    type Actor = ProjectActor;
+
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.graph.add_node(self.node)
     }
@@ -114,8 +119,10 @@ pub struct AddLink {
 
 impl ProjectCommand for AddLink {}
 
-impl Command<ProjectActor, Mutate> for AddLink {
+impl Command<Mutate> for AddLink {
     type Output = Result<Option<SocketID>>;
+    type Actor = ProjectActor;
+
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_link(self.from, self.to)
     }
@@ -128,8 +135,9 @@ pub struct RemoveLink {
 
 impl ProjectCommand for RemoveLink {}
 
-impl Command<ProjectActor, Mutate> for RemoveLink {
+impl Command<Mutate> for RemoveLink {
     type Output = Result<()>;
+    type Actor = ProjectActor;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_link(self.from, self.to)
     }
@@ -152,8 +160,9 @@ impl<K: Kind> AddNodeInput<K> {
     }
 }
 
-impl<K: Kind> Command<ProjectActor, Mutate> for AddNodeInput<K> {
+impl<K: Kind> Command<Mutate> for AddNodeInput<K> {
     type Output = Result<SocketID>; // index of the newly created socket
+    type Actor = ProjectActor;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
     }
@@ -165,8 +174,9 @@ pub struct RemoveNodeInput {
 
 impl ProjectCommand for RemoveNodeInput {}
 
-impl Command<ProjectActor, Mutate> for RemoveNodeInput {
+impl Command<Mutate> for RemoveNodeInput {
     type Output = Result<()>;
+    type Actor = ProjectActor;
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         project.remove_node_input(self.node_id)
     }
@@ -192,13 +202,14 @@ where
 {
 }
 
-impl<K, F, T> Command<ProjectActor, Mutate> for MutateTrack<K, F, T>
+impl<K, F, T> Command<Mutate> for MutateTrack<K, F, T>
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
     T: Send + 'static,
 {
     type Output = Result<T>;
+    type Actor = ProjectActor;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
         let the_ref = K::Track::access_mut(project)

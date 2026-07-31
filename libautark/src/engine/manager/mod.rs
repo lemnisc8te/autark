@@ -29,10 +29,10 @@ pub trait Actor: Send + Sized + 'static {
     fn data_mut(&mut self) -> &mut Self::Data;
 }
 
-pub trait IntoEnvelope<A: Actor, P: Permission<A>>: Command<A, P> {
-    fn into_envelope<T, R>(self, reply: R) -> A::Envelope
+pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
+    fn into_envelope<T, R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
     where
-        T: Carrier<A>,
+        T: Carrier<Self::Actor>,
         R: ReplyPort<Self::Output> + 'static;
 }
 
@@ -63,10 +63,11 @@ impl<A: Actor> Permission<A> for Mutate {
     }
 }
 
-pub trait Command<A: Actor, P: Permission<A>>: Send + 'static {
+pub trait Command<P: Permission<Self::Actor>>: Send + 'static {
     type Output: Send;
+    type Actor: Actor;
 
-    fn execute(self, actor: <P as Permission<A>>::Type<'_>) -> Self::Output;
+    fn execute(self, actor: <P as Permission<Self::Actor>>::Type<'_>) -> Self::Output;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -111,9 +112,8 @@ impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
 
 struct StdEnvelope<A, P, C, R>
 where
-    A: Actor,
-    P: Permission<A>,
-    C: Command<A, P>,
+    P: Permission<C::Actor>,
+    C: Command<P>,
     R: ReplyPort<C::Output>,
 {
     command: C,
@@ -122,15 +122,14 @@ where
     // _perm: PhantomData<P>,
 }
 
-impl<A, C> IntoEnvelope<A, Ref> for C
+impl<C> IntoEnvelope<Ref> for C
 where
-    C: Command<A, Ref>,
-    A: Actor<Envelope = BoxedEnvelope<A>>,
+    C: Command<Ref>,
+    C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
 {
-    fn into_envelope<T, R>(self, reply: R) -> A::Envelope
+    fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
     where
-        A: Actor,
-        T: Carrier<A>,
+        T: Carrier<C::Actor>,
         R: ReplyPort<Self::Output> + 'static,
     {
         Box::new(StdEnvelope {
@@ -141,14 +140,14 @@ where
     }
 }
 
-impl<A, C> IntoEnvelope<A, Mutate> for C
+impl<C> IntoEnvelope<Mutate> for C
 where
-    C: Command<A, Mutate>,
-    A: Actor<Envelope = BoxedEnvelope<A>>,
+    C: Command<Mutate>,
+    C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
 {
-    fn into_envelope<T, R>(self, reply: R) -> A::Envelope
+    fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
     where
-        T: Carrier<A>,
+        T: Carrier<C::Actor>,
         R: ReplyPort<Self::Output> + 'static,
     {
         Box::new(StdEnvelope {
@@ -161,7 +160,7 @@ where
 
 impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Ref, C, R>
 where
-    C: Command<A, Ref>,
+    C: Command<Ref, Actor = A>,
     R: ReplyPort<C::Output>,
 {
     fn handle(self: Box<Self>, actor: &mut A) {
@@ -173,7 +172,7 @@ where
 
 impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Mutate, C, R>
 where
-    C: Command<A, Mutate>,
+    C: Command<Mutate, Actor = A>,
     R: ReplyPort<C::Output>,
 {
     fn handle(self: Box<Self>, actor: &mut A) {
@@ -266,7 +265,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a read-only `Command` and await its result.
     pub async fn call<C>(&mut self, command: C) -> Result<CommandFuture<C::Output>>
     where
-        C: IntoEnvelope<A, Ref>,
+        C: IntoEnvelope<Ref, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         let envelope = command.into_envelope::<T, _>(Reply(tx));
@@ -279,7 +278,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// effect (logging, metrics) where the caller doesn't need the value.
     pub async fn notify<C>(&mut self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<A, Ref>,
+        C: IntoEnvelope<Ref, Actor = A>,
     {
         let envelope = command.into_envelope::<T, _>(NoReply);
         T::send(&mut self.sender, envelope)
@@ -288,7 +287,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a `MutatingCommand` and await its result.
     pub async fn call_mut<C>(&mut self, command: C) -> Result<C::Output>
     where
-        C: IntoEnvelope<A, Mutate>,
+        C: IntoEnvelope<Mutate, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         let envelope = command.into_envelope::<T, _>(Reply(tx));
@@ -300,7 +299,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// ("cast" in classic actor-model terms — fire and forget).
     pub async fn fire_mut<C>(&mut self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<A, Mutate>,
+        C: IntoEnvelope<Mutate, Actor = A>,
     {
         let envelope = command.into_envelope::<T, _>(NoReply);
         T::send(&mut self.sender, envelope)

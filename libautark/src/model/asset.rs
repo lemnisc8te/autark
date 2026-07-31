@@ -3,7 +3,10 @@ use std::{path::PathBuf, sync::Arc};
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
-use crate::model::{Audio, Kind, Stored};
+use crate::{
+    engine::manager::asset::AssetRegistry,
+    model::{Audio, Kind, Stored},
+};
 
 new_key_type! {
     pub struct AudioAssetID;
@@ -30,14 +33,13 @@ pub struct AudioAsset {
 
 impl Stored for AudioAsset {
     type Id = AudioAssetID;
+    type Location = AssetRegistry;
 
-    fn access(project: &super::project::ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+    fn access(project: &Self::Location) -> &slotmap::SlotMap<Self::Id, Self> {
         &project.assets
     }
 
-    fn access_mut(
-        project: &mut super::project::ProjectData,
-    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
+    fn access_mut(project: &mut Self::Location) -> &mut slotmap::SlotMap<Self::Id, Self> {
         &mut project.assets
     }
 }
