@@ -3,7 +3,6 @@ use crate::{
     model::{
         DataKind,
         flow::{Node, Socket},
-        project::ProjectData,
     },
 };
 
@@ -19,7 +18,6 @@ impl Node for Master {
         &self,
         pool: &mut PoolExecutor,
         (): &mut (),
-        _: &ProjectData,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

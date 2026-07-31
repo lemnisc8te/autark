@@ -1,3 +1,3 @@
-pub fn main() -> iced::Result {
+pub fn main() {
     todo!()
 }

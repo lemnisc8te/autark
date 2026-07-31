@@ -12,10 +12,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
-    model::{
-        flow::socket::{Socket, SocketID},
-        project::ProjectData,
-    },
+    model::flow::socket::{Socket, SocketID},
 };
 
 pub mod graph;
@@ -58,7 +55,6 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
         &self,
         pool: &mut PoolExecutor,
         state: &mut Self::State,
-        project: &ProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
@@ -75,32 +71,22 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
 pub trait MultiInputNode: ErasedNode {}
 
 pub trait ErasedNode: std::fmt::Debug + DynClone + Send + Sync + 'static {
-    fn spec_in(&self) -> Vec<Socket>;
-    fn spec_out(&self) -> Vec<Socket>;
     fn spawn_state(&self) -> Box<dyn Any + Send>;
     fn process_erased(
         &self,
         pool: &mut PoolExecutor,
         state: &mut dyn Any,
-        project: &ProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     );
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn as_any(&self) -> &dyn Any;
 }
 
 dyn_clone::clone_trait_object!(ErasedNode);
 
 impl<N: Node> ErasedNode for N {
-    fn spec_in(&self) -> Vec<Socket> {
-        Node::spec_in(self)
-    }
-
-    fn spec_out(&self) -> Vec<Socket> {
-        Node::spec_out(self)
-    }
-
     fn spawn_state(&self) -> Box<dyn Any + Send> {
         Box::new(self.init_state())
     }
@@ -109,16 +95,18 @@ impl<N: Node> ErasedNode for N {
         &self,
         pool: &mut PoolExecutor,
         state: &mut dyn Any,
-        project: &ProjectData,
         block_start: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {
         let state = state.downcast_mut::<N::State>().unwrap();
-        self.process(pool, state, project, block_start, inputs, outputs);
+        self.process(pool, state, block_start, inputs, outputs);
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

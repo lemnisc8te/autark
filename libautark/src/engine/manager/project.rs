@@ -1,6 +1,16 @@
 use crate::{
-    engine::manager::{BoxedEnvelope, Carrier, Command, Mutate},
-    model::flow::socket::{Socket, SocketID},
+    engine::manager::{
+        ActorRef, BoxedEnvelope, Carrier, Command, Handle, Mutate, Ref,
+        asset::{AssetActor, AssetTaskCarrier},
+    },
+    model::{
+        Audio,
+        arr::{clip::ResolvedAudioClip, track::Track},
+        flow::{
+            nodes::trackreader::TrackReaderState,
+            socket::{Socket, SocketID},
+        },
+    },
 };
 use anyhow::Result;
 use anyhow::anyhow;
@@ -20,7 +30,7 @@ use crate::{
     },
 };
 
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
@@ -41,12 +51,14 @@ impl<K: Kind> ProjectCommand for AddTrack<K> {}
 impl<K: Kind> Command<Mutate> for AddTrack<K>
 where
     TrackReader<K>: Node,
+    K::Track: Stored<Actor = ProjectActor>,
+    K::Clip: Stored<Actor = ProjectActor>,
 {
-    type Output = ();
+    type Output = (<K::Track as Stored>::Id, NodeID);
     type Actor = ProjectActor;
 
     fn execute(self, project: &mut ProjectData) -> Self::Output {
-        let _ = project.add_track::<K>(self.name, self.channels);
+        project.add_track::<K>(self.name, self.channels)
     }
 }
 
@@ -54,12 +66,31 @@ pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::Id);
 
 impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
-impl<K: Kind> Command<Mutate> for RemoveTrack<K> {
+impl<K> Command<Mutate> for RemoveTrack<K>
+where
+    K: Kind,
+    K::Track: Stored<Actor = ProjectActor>,
+    K::Clip: Stored<Actor = ProjectActor>,
+{
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_track::<K>(self.0)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        {
+            let this = &mut *actor;
+            let track_id = self.0;
+            let track = <K as Kind>::Track::access_mut(this)
+                .remove(track_id)
+                .ok_or(crate::engine::errors::EngineError::TrackNotFound)?;
+            let linked_id = track
+                .linked_node_id()
+                .expect("Track was orphaned from node");
+            this.graph.purge(linked_id);
+            for clip_id in track.clips().values() {
+                <K as Kind>::Clip::access_mut(this).remove(*clip_id);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -72,12 +103,17 @@ pub struct AddClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddClip<K> {}
 
-impl<K: Kind> Command<Mutate> for AddClip<K> {
+impl<K> Command<Mutate> for AddClip<K>
+where
+    K: Kind,
+    K::Track: Stored<Actor = ProjectActor>,
+    K::Clip: Stored<Actor = ProjectActor>,
+{
     type Output = Result<<K::Clip as Stored>::Id>;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
     }
 }
 
@@ -89,12 +125,17 @@ pub struct MoveClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for MoveClip<K> {}
 
-impl<K: Kind> Command<Mutate> for MoveClip<K> {
+impl<K> Command<Mutate> for MoveClip<K>
+where
+    K: Kind,
+    K::Track: Stored<Actor = ProjectActor>,
+    K::Clip: Stored<Actor = ProjectActor>,
+{
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.move_clip::<K>(self.track, self.clip, self.new_start)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.move_clip::<K>(self.track, self.clip, self.new_start)
     }
 }
 
@@ -107,8 +148,8 @@ impl<N: Node> Command<Mutate> for AddNode<N> {
     type Output = NodeID;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.graph.add_node(self.node)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.graph.add_node(self.node)
     }
 }
 
@@ -123,8 +164,8 @@ impl Command<Mutate> for AddLink {
     type Output = Result<Option<SocketID>>;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_link(self.from, self.to)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.add_link(self.from, self.to)
     }
 }
 
@@ -138,8 +179,8 @@ impl ProjectCommand for RemoveLink {}
 impl Command<Mutate> for RemoveLink {
     type Output = Result<()>;
     type Actor = ProjectActor;
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_link(self.from, self.to)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.remove_link(self.from, self.to)
     }
 }
 
@@ -163,8 +204,8 @@ impl<K: Kind> AddNodeInput<K> {
 impl<K: Kind> Command<Mutate> for AddNodeInput<K> {
     type Output = Result<SocketID>; // index of the newly created socket
     type Actor = ProjectActor;
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
     }
 }
 
@@ -177,8 +218,8 @@ impl ProjectCommand for RemoveNodeInput {}
 impl Command<Mutate> for RemoveNodeInput {
     type Output = Result<()>;
     type Actor = ProjectActor;
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.remove_node_input(self.node_id)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        actor.remove_node_input(self.node_id)
     }
 }
 
@@ -188,7 +229,7 @@ where
     F: FnOnce(&mut K::Track) -> T + Send,
     T: Send,
 {
-    pub f: F,
+    pub func: F,
     pub id: <K::Track as Stored>::Id,
     _k: PhantomData<K>,
     _t: PhantomData<T>,
@@ -207,15 +248,78 @@ where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
     T: Send + 'static,
+    K::Track: Stored<Actor = ProjectActor>,
 {
     type Output = Result<T>;
     type Actor = ProjectActor;
 
-    fn execute(self, project: &mut ProjectData) -> Self::Output {
-        let the_ref = K::Track::access_mut(project)
+    fn execute(self, actor: &mut ProjectData) -> Self::Output {
+        let the_ref = K::Track::access_mut(actor)
             .get_mut(self.id)
             .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
-        Ok((self.f)(the_ref))
+        Ok((self.func)(the_ref))
+    }
+}
+
+// Ref Commands
+
+pub struct GetMasterNodeId;
+
+impl ProjectCommand for GetMasterNodeId {}
+
+impl Command<Ref> for GetMasterNodeId {
+    type Output = NodeID;
+
+    type Actor = ProjectActor;
+
+    fn execute(self, actor: <Ref as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        actor.master_node_id
+    }
+}
+
+pub struct InputSocketOf(pub NodeID, pub usize);
+
+impl ProjectCommand for InputSocketOf {}
+
+impl Command<Ref> for InputSocketOf {
+    type Output = SocketID;
+
+    type Actor = ProjectActor;
+
+    fn execute(self, actor: <Ref as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        actor.graph.inputs_of(self.0)[self.1]
+    }
+}
+
+pub struct OutputSocketOf(pub NodeID, pub usize);
+
+impl ProjectCommand for OutputSocketOf {}
+
+impl Command<Ref> for OutputSocketOf {
+    type Output = SocketID;
+
+    type Actor = ProjectActor;
+
+    fn execute(self, actor: <Ref as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        actor.graph.outputs_of(self.0)[self.1]
+    }
+}
+
+// Actor Metacommands
+
+pub struct Publish {
+    pub asset_h: Handle<AssetActor, AssetTaskCarrier>,
+}
+
+impl ProjectCommand for Publish {}
+
+impl Command<ActorRef> for Publish {
+    type Output = Result<GraphUpdate>;
+
+    type Actor = ProjectActor;
+
+    fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor.publish_current(&self.asset_h)
     }
 }
 
@@ -224,11 +328,13 @@ impl ProjectActor {
         &self.current
     }
 
+    pub const fn project_mut(&mut self) -> &mut ProjectData {
+        &mut self.current
+    }
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             self.redo_stack
                 .push(std::mem::replace(&mut self.current, prev));
-            self.publish_current();
         }
     }
 
@@ -236,7 +342,6 @@ impl ProjectActor {
         if let Some(next) = self.redo_stack.pop() {
             self.undo_stack
                 .push(std::mem::replace(&mut self.current, next));
-            self.publish_current();
         }
     }
 
@@ -244,11 +349,13 @@ impl ProjectActor {
         let previous_commit = std::mem::replace(&mut self.current, next);
         self.undo_stack.push(previous_commit);
         self.redo_stack.clear();
-        self.publish_current();
     }
 
     /// Builds the next `GraphUpdate`
-    fn publish_current(&self) -> Result<GraphUpdate> {
+    pub fn publish_current(
+        &self,
+        asset_h: &Handle<AssetActor, AssetTaskCarrier>,
+    ) -> Result<GraphUpdate> {
         let schedule = self.project().compile_graph()?;
 
         if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
@@ -269,12 +376,35 @@ impl ProjectActor {
 
         let state_additions: Vec<_> = new_ids
             .difference(&old_ids)
-            .map(|&id| (id, self.project().graph.nodes[id].spawn_state()))
+            .map(|&id| {
+                let node = self.project().graph.nodes[id].clone();
+                if let Some(n) = node.as_any().downcast_ref::<TrackReader<Audio>>() {
+                    let track_id = n.id;
+                    let the_clips: std::collections::BTreeMap<Tick, ResolvedAudioClip> = self
+                        .project()
+                        .tracks[track_id]
+                        .clips
+                        .iter()
+                        .map(|(tick, clipid)| {
+                            let the_clip = self.project().clips[*clipid];
+                            let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone());
+                            (*tick, resolved)
+                        })
+                        .collect();
+                    dbg!(&the_clips);
+
+                    (
+                        id,
+                        Box::new(TrackReaderState { clips: the_clips }) as Box<dyn Any + Send>,
+                    )
+                } else {
+                    (id, self.project().graph.nodes[id].spawn_state())
+                }
+            })
             .collect();
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
         Ok(GraphUpdate {
-            project: self.project().clone().into(),
             schedule,
             state_additions,
             state_removals,
@@ -293,11 +423,11 @@ impl Actor for ProjectActor {
     }
 
     fn data(&self) -> &Self::Data {
-        &self.current
+        self.project()
     }
 
     fn data_mut(&mut self) -> &mut Self::Data {
-        &mut self.current
+        self.project_mut()
     }
 
     fn new(current: Self::InitParams) -> Self {

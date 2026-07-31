@@ -1,4 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use slotmap::{SecondaryMap, SlotMap};
@@ -14,7 +17,7 @@ use crate::{
 /// A graph representing the signal flow between nodes.
 #[derive(Debug, Default, Clone)]
 pub struct NodeGraph {
-    pub nodes: SlotMap<NodeID, Box<dyn ErasedNode>>,
+    pub nodes: SlotMap<NodeID, Arc<dyn ErasedNode>>,
     pub sockets: SlotMap<SocketID, SocketMeta>,
     pub node_sockets: SecondaryMap<NodeID, (Vec<SocketID>, Vec<SocketID>)>, // ordered inputs, outputs
     // Map Incoming -> Outgoing sockets
@@ -64,7 +67,7 @@ impl NodeGraph {
 
     pub fn add_node<N: Node>(&mut self, node: N) -> NodeID {
         let (inputs, outputs) = (node.spec_in(), node.spec_out());
-        let node_id = self.nodes.insert(Box::new(node));
+        let node_id = self.nodes.insert(Arc::new(node));
         let register =
             |graph: &mut NodeGraph, socks: Vec<Socket>, dir: SocketDirection| -> Vec<SocketID> {
                 socks

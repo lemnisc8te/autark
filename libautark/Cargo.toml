@@ -3,6 +3,10 @@ name = "libautark"
 version = "0.1.0"
 edition = "2024"
 
+
+[profile.dev]
+panic = "abort"
+
 [dependencies]
 anyhow = "1.0.103"
 arc-swap = "1.9.2"

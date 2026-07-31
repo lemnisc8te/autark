@@ -5,7 +5,6 @@ use crate::{
     model::{
         Audio, DataKind, Kind,
         flow::{MultiInputNode, Node, Socket},
-        project::ProjectData,
     },
 };
 
@@ -38,7 +37,6 @@ impl Node for Duplicate<Audio> {
         &self,
         pool: &mut PoolExecutor,
         _state: &mut Self::State,
-        _: &ProjectData,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

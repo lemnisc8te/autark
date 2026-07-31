@@ -12,6 +12,9 @@ pub mod transport;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
+use crate::engine::manager::audio::UpdateCmd;
+use crate::engine::manager::project::Publish;
+use crate::model::flow::{ErasedNode, NodeID};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
@@ -22,7 +25,7 @@ use crate::{
         },
         tick::Tick,
     },
-    model::{flow::NodeID, project::ProjectData},
+    model::project::ProjectData,
 };
 
 use anyhow::Result;
@@ -30,6 +33,7 @@ use anyhow::Result;
 pub type SlotIndex = usize;
 
 pub struct ScheduleStep {
+    pub node: Arc<dyn ErasedNode>,
     pub node_id: NodeID,
     pub input_slots: Vec<SlotIndex>,
     pub output_slots: Vec<SlotIndex>,
@@ -63,17 +67,17 @@ impl Engine {
     pub fn new(project: ProjectData) -> Result<Self> {
         let config = EngineConfig::create()?;
 
-        // let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let audio_h = StdManager::<AudioTaskCarrier>::spawn(
+        let (audio_h, audio_j) = StdManager::<AudioTaskCarrier>::spawn(
             (config.clone(), playhead.clone()),
             DEFAULT_MANAGER_CAPACITY,
         );
 
-        let project_h = StdManager::<ProjectTaskCarrier>::spawn(project, DEFAULT_MANAGER_CAPACITY);
+        let (project_h, project_join) =
+            StdManager::<ProjectTaskCarrier>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
-        let asset_h: Handle<manager::asset::AssetActor, AssetTaskCarrier> =
+        let (asset_h, asset_j) =
             StdManager::<AssetTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
         Ok(Self {
@@ -83,6 +87,17 @@ impl Engine {
             project_h,
             audio_h,
         })
+    }
+
+    pub async fn publish(&self) {
+        let update = self
+            .project_h
+            .meta_call(Publish {
+                asset_h: self.asset_h.clone(),
+            })
+            .await
+            .unwrap();
+        self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
     }
 
     pub const fn sample_rate(&self) -> u32 {
@@ -99,50 +114,60 @@ impl Engine {
     }
 }
 
-// engine/mod.rs
 pub trait HasHandle<A: Actor> {
     type Carrier: Carrier<A>;
-    fn handle_mut(&mut self) -> &mut Handle<A, Self::Carrier>;
+    fn handle(&self) -> &Handle<A, Self::Carrier>;
 }
 
 impl HasHandle<manager::project::ProjectActor> for Engine {
     type Carrier = ProjectTaskCarrier;
-    fn handle_mut(&mut self) -> &mut Handle<manager::project::ProjectActor, ProjectTaskCarrier> {
-        &mut self.project_h
+    fn handle(&self) -> &Handle<manager::project::ProjectActor, ProjectTaskCarrier> {
+        &self.project_h
     }
 }
 impl HasHandle<manager::asset::AssetActor> for Engine {
     type Carrier = AssetTaskCarrier;
-    fn handle_mut(&mut self) -> &mut Handle<manager::asset::AssetActor, AssetTaskCarrier> {
-        &mut self.asset_h
+    fn handle(&self) -> &Handle<manager::asset::AssetActor, AssetTaskCarrier> {
+        &self.asset_h
     }
 }
 impl HasHandle<manager::audio::AudioActor> for Engine {
     type Carrier = AudioTaskCarrier;
-    fn handle_mut(&mut self) -> &mut Handle<manager::audio::AudioActor, AudioTaskCarrier> {
-        &mut self.audio_h
+    fn handle(&self) -> &Handle<manager::audio::AudioActor, AudioTaskCarrier> {
+        &self.audio_h
     }
 }
 
 impl Engine {
-    pub async fn call<C>(&mut self, command: C) -> Result<C::Output>
+    pub async fn get<C>(&self, command: C) -> C::Output
     where
         C: Command<Ref> + IntoEnvelope<Ref>,
         Self: HasHandle<C::Actor>,
     {
-        Ok(HasHandle::<C::Actor>::handle_mut(self)
-            .call(command)
-            .await?
-            .await)
+        HasHandle::<C::Actor>::handle(self).call(command).await
     }
 
-    pub async fn call_mut<C>(&mut self, command: C) -> Result<C::Output>
+    pub async fn call_mut<C>(&self, command: C) -> C::Output
     where
         C: Command<Mutate> + IntoEnvelope<Mutate>,
         Self: HasHandle<C::Actor>,
     {
-        HasHandle::<C::Actor>::handle_mut(self)
-            .call_mut(command)
-            .await
+        HasHandle::<C::Actor>::handle(self).call_mut(command).await
+    }
+
+    pub async fn notify<C>(&self, command: C)
+    where
+        C: Command<Ref> + IntoEnvelope<Ref>,
+        Self: HasHandle<C::Actor>,
+    {
+        let _ = HasHandle::<C::Actor>::handle(self).notify(command).await;
+    }
+
+    pub async fn fire_mut<C>(&self, command: C)
+    where
+        C: Command<Mutate> + IntoEnvelope<Mutate>,
+        Self: HasHandle<C::Actor>,
+    {
+        let _ = HasHandle::<C::Actor>::handle(self).fire_mut(command).await;
     }
 }

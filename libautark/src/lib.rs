@@ -57,126 +57,175 @@ pub mod model;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::manager::project::AddNode;
-    use crate::model::Audio;
-    use crate::model::flow::nodes::biquad_filter::BiquadFilter;
-    use crate::model::flow::nodes::sum::Sum;
-    use crate::model::project::ProjectData;
-    use anyhow::Result;
+    use crate::{
+        engine::{
+            manager::{
+                asset::{GetAudioAsset, LoadAudioAsset},
+                audio::{Play, TransportCmd},
+                project::{
+                    AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId,
+                    InputSocketOf, OutputSocketOf,
+                },
+            },
+            transport::TransportState,
+        },
+        model::{
+            Audio,
+            flow::nodes::{biquad_filter::BiquadFilter, sum::Sum},
+            project::ProjectData,
+        },
+    };
 
     use engine::Engine;
+    use tokio::runtime::Builder;
     #[test]
     fn it_works() {
-        helper().unwrap();
+        helper();
     }
 
-    fn helper() -> Result<()> {
+    fn helper() {
         let mut engine = {
             let project = ProjectData::new();
-            Engine::new(project)?
+            Engine::new(project).unwrap()
         };
+        let rt = Builder::new_current_thread().build().unwrap();
 
-        tokio::spawn(async move {
-            let master_node_id = engine.project().master_node_id;
+        rt.block_on(async move {
+            let master_node_id = engine.get(GetMasterNodeId).await;
 
-            let master_in = engine.project().graph.inputs_of(master_node_id)[0];
+            let master_in = engine.get(InputSocketOf(master_node_id, 0)).await;
 
-            let song_asset = engine.load_asset("./assets/AUDIO_4892.mp3")?;
+            let song_asset = engine
+                .call_mut(LoadAudioAsset(
+                    "./assets/AUDIO_4892.mp3".into(),
+                    engine.sample_rate(),
+                ))
+                .await?;
+
+            let filter1 = engine
+                .call_mut(AddNode {
+                    node: BiquadFilter::new(
+                        engine.channels(),
+                        model::flow::nodes::biquad_filter::FilterType::HighPass,
+                        engine.sample_rate(),
+                        1600.0,
+                        BiquadFilter::BUTTERWORTH_Q,
+                        0.0,
+                    ),
+                })
+                .await;
+
+            let filter1_in = engine.get(InputSocketOf(filter1, 0)).await;
+            let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
+
+            let master_sum = engine
+                .call_mut(AddNode {
+                    node: Sum::<Audio>::new(),
+                })
+                .await;
+            let master_sum_in0 = engine
+                .call_mut(AddNodeInput::<Audio>::new(master_sum))
+                .await
+                .unwrap();
+
+            let master_sum_out = engine.get(OutputSocketOf(master_sum, 0)).await;
+
+            engine
+                .call_mut(AddLink {
+                    from: filter1_out,
+                    to: master_sum_in0,
+                })
+                .await?;
+
+            engine
+                .call_mut(AddLink {
+                    from: master_sum_out,
+                    to: master_in,
+                })
+                .await?;
+
+            let (song_track, song_node) = engine
+                .call_mut(AddTrack {
+                    name: "Song".to_string(),
+                    kind: Audio,
+                    channels: engine.channels(),
+                })
+                .await;
+
+            let song_out = engine.get(OutputSocketOf(song_node, 0)).await;
+
+            engine
+                .call_mut(AddLink {
+                    from: song_out,
+                    to: filter1_in,
+                })
+                .await?;
 
             let song_len = {
-                let asset = &engine.project().assets[song_asset];
-                asset.samples.len() as u64 / u64::from(asset.channels)
+                let asset = engine.get(GetAudioAsset(song_asset)).await.unwrap();
+                Ok::<u64, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
+            engine
+                .call_mut(AddClip::<Audio> {
+                    track: song_track,
+                    start: engine::tick::Tick(0),
+                    end: engine::tick::Tick(song_len?),
+                    asset_id: song_asset,
+                })
+                .await?;
 
-            let filter1 = engine.call_mut(AddNode {
-                node: BiquadFilter::new(
-                    engine.channels(),
-                    model::flow::nodes::biquad_filter::FilterType::HighPass,
+            let clap_asset = engine
+                .call_mut(LoadAudioAsset(
+                    "./assets/clap.mp3".into(),
                     engine.sample_rate(),
-                    1600.0,
-                    BiquadFilter::BUTTERWORTH_Q,
-                    0.0,
-                ),
-            });
-
-            let filter1_in = engine.project().graph.inputs_of(filter1)[0];
-            let filter1_out = engine.project().graph.outputs_of(filter1)[0];
-
-            let master_sum = engine.apply(AddNode {
-                node: Sum::<Audio>::new(),
-            })?;
-
-            let master_sum_in0 = engine.apply(AddNodeInput::<Audio>::new(master_sum))?;
-
-            let master_sum_out = engine.project().graph.outputs_of(master_sum)[0];
-
-            engine.apply(AddLink {
-                from: filter1_out,
-                to: master_sum_in0,
-            })?;
-
-            engine.apply(AddLink {
-                from: master_sum_out,
-                to: master_in,
-            })?;
-
-            let (song_track, song_node) = engine.apply(AddTrack {
-                name: "Song".to_string(),
-                kind: Audio,
-                channels: engine.channels(),
-            })?;
-
-            let song_out = engine.project().graph.outputs_of(song_node)[0];
-
-            engine.apply(AddLink {
-                from: song_out,
-                to: filter1_in,
-            })?;
-
-            engine.apply(AddClip::<Audio> {
-                track: song_track,
-                start: engine::tick::Tick(0),
-                end: engine::tick::Tick(song_len),
-                asset_id: song_asset,
-            })?;
-
-            let clap_asset = engine.load_asset("./assets/clap.mp3")?;
+                ))
+                .await?;
 
             let clap_len = {
-                let asset = &engine.project().assets[clap_asset];
-                asset.samples.len() as u64 / u64::from(asset.channels)
+                let asset = &engine.get(GetAudioAsset(clap_asset)).await.unwrap();
+                Ok::<_, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
 
-            let (clap_track, clap_node) = engine.apply(AddTrack {
-                name: "Clap".to_string(),
-                kind: Audio,
-                channels: engine.channels(),
-            })?;
+            let (clap_track, clap_node) = engine
+                .call_mut(AddTrack {
+                    name: "Clap".to_string(),
+                    kind: Audio,
+                    channels: engine.channels(),
+                })
+                .await;
 
-            engine.apply(AddClip::<Audio> {
-                track: clap_track,
-                start: engine::tick::Tick(1000),
-                end: engine::tick::Tick(clap_len),
-                asset_id: clap_asset,
-            })?;
+            engine
+                .call_mut(AddClip::<Audio> {
+                    track: clap_track,
+                    start: engine::tick::Tick(1000),
+                    end: engine::tick::Tick(clap_len?),
+                    asset_id: clap_asset,
+                })
+                .await?;
 
-            let clap_out = engine.project().graph.outputs_of(clap_node)[0];
+            let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
 
-            let master_sum_in1 = engine.apply(AddNodeInput::<Audio>::new(master_sum))?;
+            let master_sum_in1 = engine
+                .call_mut(AddNodeInput::<Audio>::new(master_sum))
+                .await?;
 
-            engine.apply(AddLink {
-                from: clap_out,
-                to: master_sum_in1,
-            })?;
+            engine
+                .call_mut(AddLink {
+                    from: clap_out,
+                    to: master_sum_in1,
+                })
+                .await?;
 
-            engine.move_playhead(engine::tick::Tick(0))?;
-        });
+            engine.publish().await;
 
-        engine.transport.play();
-        println!("Playing... press enter to quit");
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        engine.transport.stop();
-        Ok(())
+            engine.move_playhead(engine::tick::Tick(0)).unwrap();
+            engine.fire_mut(Play).await;
+            println!("Playing... press enter to quit");
+            let mut buf = String::new();
+            std::io::stdin().read_line(&mut buf).unwrap();
+            engine.fire_mut(TransportCmd(TransportState::Stopped)).await;
+            Ok::<_, anyhow::Error>(())
+        })
+        .unwrap();
     }
 }

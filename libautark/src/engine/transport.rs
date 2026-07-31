@@ -20,7 +20,7 @@ impl Transport {
     }
 
     #[inline]
-    fn transport(&self, to: TransportState) {
+    pub fn transport(&self, to: TransportState) {
         self.0.store(to as u8, Ordering::Relaxed);
     }
 

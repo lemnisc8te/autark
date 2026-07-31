@@ -4,17 +4,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
 
 use crate::{
-    engine::{
-        manager::{Actor, Carrier, Handle},
-        tick::Tick,
-    },
+    engine::{manager::Actor, tick::Tick},
     model::{
         arr::{
             clip::{AudioClip, Clip},
             track::{AudioTrack, Track},
         },
         asset::AudioAsset,
-        project::ProjectData,
     },
 };
 
@@ -85,15 +81,24 @@ impl DataKind {
     }
 }
 
-pub trait Renderable {
-    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16);
+pub struct RenderBlock<'b> {
+    pub buf: &'b mut [f32],
+    pub block_start: Tick,
+    pub channels: u16,
+}
+
+pub trait Renderable: Send {
+    fn render(&self, block: &mut RenderBlock);
 }
 
 pub trait Stored: Sized {
-    type Id: Key + Serialize + DeserializeOwned + Send + Sync + 'static;
-    type Location: Actor;
-    fn access<C: Carrier<Self::Location>>(
-        handle: &Handle<Self::Location, C>,
-    ) -> &SlotMap<Self::Id, Self>;
-    fn access_mut(project: &mut ProjectData) -> &mut SlotMap<Self::Id, Self>;
+    type Id: Key + Serialize + DeserializeOwned + Send + 'static;
+    type Actor: Actor;
+    // fn access<'a>(loc: <Ref as Permission<Self::Actor>>::Type<'a>) -> &'a SlotMap<Self::Id, Self>;
+
+    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::Id, Self>;
+    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::Id, Self>;
+    // fn access_mut<'a>(
+    //     loc: <Mutate as Permission<Self::Actor>>::Type<'a>,
+    // ) -> &'a mut SlotMap<Self::Id, Self>;
 }

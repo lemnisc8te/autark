@@ -1,18 +1,14 @@
-use std::{any::Any, sync::Arc};
+use std::any::Any;
 
 use slotmap::SecondaryMap;
 
 use crate::{
     engine::{CompiledGraph, constants::MAX_NODES},
-    model::{flow::NodeID, project::ProjectData},
+    model::flow::NodeID,
 };
 
-/// Everything a topology change implies, computed entirely off the audio
-/// thread and handed over as one atomic unit so the schedule and the state
-/// pool additions it depends on can never arrive out of sync.
 #[derive(Default)]
 pub struct GraphUpdate {
-    pub project: Arc<ProjectData>,
     pub schedule: CompiledGraph,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,
@@ -54,6 +50,7 @@ impl NodeStatePool {
         for (id, state) in update.state_additions.drain(..) {
             self.states.insert(id, state);
         }
+
         for id in update.state_removals.drain(..) {
             if let Some(old) = self.states.remove(id) {
                 let _ = garbage.push(Garbage::NodeState(old));

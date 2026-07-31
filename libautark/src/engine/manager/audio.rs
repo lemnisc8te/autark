@@ -7,23 +7,19 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cpal::traits::StreamTrait;
 
-use crate::{
-    engine::{
-        CompiledGraph,
-        bbp::BlockBufferPool,
-        constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
-        engineconfig::EngineConfig,
-        manager::{Actor, BoxedEnvelope, Carrier, Command, Manager, Mutate, StdManager},
-        state::{Garbage, GraphUpdate, NodeStatePool},
-        tick::Tick,
-        transport::Transport,
-    },
-    model::project::ProjectData,
+use crate::engine::{
+    CompiledGraph,
+    bbp::BlockBufferPool,
+    constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
+    engineconfig::EngineConfig,
+    manager::{Actor, BoxedEnvelope, Carrier, Command, Mutate},
+    state::{Garbage, GraphUpdate, NodeStatePool},
+    tick::Tick,
+    transport::{Transport, TransportState},
 };
 
 pub struct AudioActor {
     update_tx: rtrb::Producer<GraphUpdate>,
-    data: (),
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
 }
@@ -56,7 +52,6 @@ impl AudioActor {
         stream.play()?; // device stream runs continuously; transport gates output
         Ok(Self {
             transport,
-            data: (),
             update_tx,
             _stream: stream,
         })
@@ -82,42 +77,34 @@ impl AudioActor {
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                assert_no_alloc::assert_no_alloc(|| {
-                    data.fill(T::from_sample(0.0));
-                    // Tier 1: drain any pending structural updates. Zero
-                    // allocation: everything was pre-built off-thread.
-                    while let Ok(mut update) = update_rx.pop() {
-                        state_pool.apply(&mut update, &mut garbage_tx);
-                        if let Some(old) = current.replace(update) {
-                            let _ = garbage_tx.push(Garbage::Update(old));
-                        }
+                // assert_no_alloc::assert_no_alloc(|| {
+                data.fill(T::from_sample(0.0));
+                // Tier 1: drain any pending structural updates. Zero
+                // allocation: everything was pre-built off-thread.
+                while let Ok(mut update) = update_rx.pop() {
+                    state_pool.apply(&mut update, &mut garbage_tx);
+                    if let Some(old) = current.replace(update) {
+                        let _ = garbage_tx.push(Garbage::Update(old));
                     }
+                }
 
-                    if !transport.is_playing() {
-                        return;
-                    }
-                    let frame_count = data.len() / channels as usize;
-                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
+                if !transport.is_playing() {
+                    return;
+                }
+                let frame_count = data.len() / channels as usize;
+                let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
-                    let Some(GraphUpdate {
-                        project, schedule, ..
-                    }) = current.as_ref()
-                    else {
-                        return;
-                    };
+                let Some(GraphUpdate { schedule, .. }) = current.as_ref() else {
+                    return;
+                };
 
-                    let mixed = Self::execute_block(
-                        schedule,
-                        project,
-                        Tick(start),
-                        &mut buffer_pool,
-                        &mut state_pool,
-                    );
+                let mixed =
+                    Self::execute_block(schedule, Tick(start), &mut buffer_pool, &mut state_pool);
 
-                    for (dst, &src) in data.iter_mut().zip(mixed) {
-                        *dst = T::from_sample(src);
-                    }
-                });
+                for (dst, &src) in data.iter_mut().zip(mixed) {
+                    *dst = T::from_sample(src);
+                }
+                // });
             },
             move |err| eprintln!("audio stream error: {err}"),
             None,
@@ -129,45 +116,53 @@ impl AudioActor {
     /// Runs the compiled schedule for one block and returns the master mix.
     pub fn execute_block<'a>(
         schedule: &CompiledGraph,
-        project: &ProjectData,
         block_start: Tick,
         pool: &'a mut BlockBufferPool,
         state_pool: &mut NodeStatePool,
     ) -> &'a [f32] {
-        // assert_no_alloc(|| {
+        assert_no_alloc::assert_no_alloc(|| {
+            // Clear the pool. Unless you want to summon demons.
+            pool.clear();
 
-        // Clear the pool. Unless you want to summon demons.
-        pool.clear();
+            let mut executor = pool.executor();
 
-        let mut executor = pool.executor();
+            for i in 0..schedule.steps.len() {
+                let step = &schedule.steps[i];
+                let node = &step.node;
 
-        for i in 0..schedule.steps.len() {
-            let step = &schedule.steps[i];
-            let node = &project.graph.nodes[step.node_id];
+                node.process_erased(
+                    &mut executor,
+                    state_pool.get_mut(step.node_id),
+                    block_start,
+                    &step.input_slots,
+                    &step.output_slots,
+                );
+            }
 
-            node.process_erased(
-                &mut executor,
-                state_pool.get_mut(step.node_id),
-                project,
-                block_start,
-                &step.input_slots,
-                &step.output_slots,
-            );
-        }
-
-        executor.get_input(schedule.master_output_slot)
-        // })
+            executor.get_input(schedule.master_output_slot)
+        })
     }
 }
 
-pub struct TransportCmd(pub Transport);
+pub struct TransportCmd(pub TransportState);
 
 impl Command<Mutate> for TransportCmd {
     type Actor = AudioActor;
     type Output = ();
 
     fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        actor.transport.replace(self.0)
+        actor.transport.transport(self.0);
+    }
+}
+
+pub struct Play;
+
+impl Command<Mutate> for Play {
+    type Actor = AudioActor;
+    type Output = ();
+
+    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+        actor.transport.play();
     }
 }
 
@@ -178,7 +173,7 @@ impl Command<Mutate> for UpdateCmd {
     type Actor = AudioActor;
 
     fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        actor.update_tx.push(self.0);
+        actor.update_tx.push(self.0).unwrap();
     }
 }
 
@@ -224,8 +219,4 @@ impl Carrier<AudioActor> for AudioTaskCarrier {
     fn recv(receiver: &mut Self::Receiver) -> Result<<AudioActor as Actor>::Envelope> {
         Ok(receiver.pop()?)
     }
-}
-
-fn test(params: <AudioActor as Actor>::InitParams) {
-    let m = StdManager::<AudioTaskCarrier>::spawn(params, 0);
 }

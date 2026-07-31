@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    engine::manager::{Actor, BoxedEnvelope, Carrier},
-    model::asset::{AudioAsset, AudioAssetID},
+    engine::manager::{Actor, BoxedEnvelope, Carrier, Command, Mutate, Ref},
+    model::asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
 };
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -27,10 +27,35 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
+pub struct GetAudioAsset(pub AudioAssetID);
+
+impl Command<Ref> for GetAudioAsset {
+    type Output = Option<AudioAsset>;
+
+    type Actor = AssetActor;
+
+    fn execute(self, actor: <Ref as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        actor.audio.get(self.0).cloned()
+    }
+}
+
+pub struct LoadAudioAsset(pub PathBuf, pub u32);
+
+impl Command<Mutate> for LoadAudioAsset {
+    type Output = Result<AudioAssetID>;
+
+    type Actor = AssetActor;
+
+    fn execute(self, actor: <Mutate as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        actor.load_audio_asset(self.0, self.1)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct AssetRegistry {
     pub audio: SlotMap<AudioAssetID, AudioAsset>,
 }
+
 impl AssetRegistry {
     pub fn load_audio_asset(
         &mut self,
@@ -76,7 +101,6 @@ impl AssetRegistry {
 
         // Store the track identifier, we'll use it to filter packets.
         let track_id = track.id;
-
         let channels = decoder
             .codec_params()
             .channels
@@ -114,11 +138,12 @@ impl AssetRegistry {
             Self::resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
 
         let audio_asset = AudioAsset {
-            samples: Arc::new(resampled),
+            payload: AudioAssetPayload::Resident(Arc::from(resampled)),
             channels,
             sample_rate: target_sample_rate,
             gain: 1.0,
             path,
+            len: total_sample_count,
         };
 
         let new_key = self.audio.insert(audio_asset);

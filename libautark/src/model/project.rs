@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 
 use crate::{
-    engine::{CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError, tick::Tick},
+    engine::{
+        CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError,
+        manager::project::ProjectActor, tick::Tick,
+    },
     model::{
         DataKind, Kind, Stored,
         arr::{
             clip::{AudioClip, AudioClipID, Clip},
             track::{AudioTrack, AudioTrackID, Track},
         },
-        asset::{AudioAsset, AudioAssetID},
         flow::{
             Node, NodeID,
             graph::NodeGraph,
@@ -51,12 +53,17 @@ impl ProjectData {
         self.graph.add_link(from_id, to_id)
     }
 
-    pub fn move_clip<K: Kind>(
+    pub fn move_clip<K>(
         &mut self,
         track: <K::Track as Stored>::Id,
         clip: <K::Clip as Stored>::Id,
         new_start: Tick,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        K: Kind,
+        K::Track: Stored<Actor = ProjectActor>,
+        K::Clip: Stored<Actor = ProjectActor>,
+    {
         let track = K::Track::access_mut(self)
             .get_mut(track)
             .ok_or(EngineError::TrackNotFound)?;
@@ -68,13 +75,18 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_clip_to_track<K: Kind>(
+    pub fn add_clip_to_track<K>(
         &mut self,
         track: <K::Track as Stored>::Id,
         start: Tick,
         length: Tick,
         asset_id: <K::Asset as Stored>::Id,
-    ) -> Result<<K::Clip as Stored>::Id> {
+    ) -> Result<<K::Clip as Stored>::Id>
+    where
+        K: Kind,
+        K::Track: Stored<Actor = ProjectActor>,
+        K::Clip: Stored<Actor = ProjectActor>,
+    {
         let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
         let track = K::Track::access_mut(self)
             .get_mut(track)
@@ -83,33 +95,21 @@ impl ProjectData {
         Ok(clip_id)
     }
 
-    pub fn remove_track<K: Kind>(&mut self, track_id: <K::Track as Stored>::Id) -> Result<()> {
-        let track = K::Track::access_mut(self)
-            .remove(track_id)
-            .ok_or(EngineError::TrackNotFound)?;
-        let linked_id = track
-            .linked_node_id()
-            .expect("Track was orphaned from node");
-        self.graph.purge(linked_id);
-        for clip_id in track.clips().values() {
-            K::Clip::access_mut(self).remove(*clip_id);
-        }
-        Ok(())
-    }
-
     pub fn add_track<K: Kind>(
         &mut self,
         name: String,
         channels: u16,
-    ) -> Result<(<K::Track as Stored>::Id, NodeID)>
+    ) -> (<K::Track as Stored>::Id, NodeID)
     where
         TrackReader<K>: Node,
+        K::Track: Stored<Actor = ProjectActor>,
+        K::Clip: Stored<Actor = ProjectActor>,
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
         let reader_node = TrackReader::<K>::new(track_id, channels);
         let node_id = self.graph.add_node(reader_node);
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
-        Ok((track_id, node_id))
+        (track_id, node_id)
     }
 
     pub fn add_socket_to_node(&mut self, node_id: NodeID, socket: Socket) -> Result<SocketID> {
@@ -171,7 +171,10 @@ impl ProjectData {
                 .map(|&out_id| socket_slot[&out_id])
                 .collect();
 
+            let node = self.graph.nodes[node_id].clone();
+
             steps.push(ScheduleStep {
+                node,
                 node_id,
                 input_slots,
                 output_slots,
