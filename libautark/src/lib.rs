@@ -8,14 +8,15 @@
 #[deny(
     unreachable_pub,
     unused_qualifications,
-    // clippy::pedantic,
+    clippy::pedantic,
     clippy::cargo,
+    clippy::used_underscore_binding,
     // clippy::nursery,
     clippy::perf,
     clippy::correctness,
     clippy::suspicious,
     clippy::complexity,
-    // clippy::style,
+    clippy::style,
     clippy::branches_sharing_code,
     clippy::use_self,
     clippy::redundant_allocation,
@@ -31,7 +32,7 @@
     // missing_docs,
     clippy::unwrap_in_result,
     clippy::large_stack_frames,
-    // clippy::panic,
+    clippy::panic,
     clippy::dbg_macro,
     // clippy::unwrap_used,
     // clippy::restriction
@@ -71,7 +72,10 @@ mod tests {
         },
         model::{
             Audio,
-            flow::nodes::{biquad_filter::BiquadFilter, sum::Sum},
+            flow::{
+                nodes::{biquad_filter::BiquadFilter, sum::Sum},
+                socket::SocketDirection,
+            },
             project::ProjectData,
         },
     };
@@ -84,7 +88,7 @@ mod tests {
     }
 
     fn helper() {
-        let mut engine = {
+        let engine = {
             let project = ProjectData::new();
             Engine::new(project).unwrap()
         };
@@ -102,21 +106,21 @@ mod tests {
                 ))
                 .await?;
 
-            let filter1 = engine
-                .call_mut(AddNode {
-                    node: BiquadFilter::new(
-                        engine.channels(),
-                        model::flow::nodes::biquad_filter::FilterType::HighPass,
-                        engine.sample_rate(),
-                        1600.0,
-                        BiquadFilter::BUTTERWORTH_Q,
-                        0.0,
-                    ),
-                })
-                .await;
+            // let filter1 = engine
+            //     .call_mut(AddNode {
+            //         node: BiquadFilter::new(
+            //             engine.channels(),
+            //             model::flow::nodes::biquad_filter::FilterType::HighPass,
+            //             engine.sample_rate(),
+            //             1600.0,
+            //             BiquadFilter::BUTTERWORTH_Q,
+            //             0.0,
+            //         ),
+            //     })
+            //     .await;
 
-            let filter1_in = engine.get(InputSocketOf(filter1, 0)).await;
-            let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
+            // let filter1_in = engine.get(InputSocketOf(filter1, 0)).await;
+            // let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
 
             let master_sum = engine
                 .call_mut(AddNode {
@@ -124,18 +128,21 @@ mod tests {
                 })
                 .await;
             let master_sum_in0 = engine
-                .call_mut(AddNodeInput::<Audio>::new(master_sum))
+                .call_mut(AddNodeInput::<Audio>::new(
+                    master_sum,
+                    SocketDirection::Input,
+                ))
                 .await
                 .unwrap();
 
             let master_sum_out = engine.get(OutputSocketOf(master_sum, 0)).await;
 
-            engine
-                .call_mut(AddLink {
-                    from: filter1_out,
-                    to: master_sum_in0,
-                })
-                .await?;
+            // engine
+            //     .call_mut(AddLink {
+            //         from: filter1_out,
+            //         to: master_sum_in0,
+            //     })
+            //     .await?;
 
             engine
                 .call_mut(AddLink {
@@ -157,7 +164,7 @@ mod tests {
             engine
                 .call_mut(AddLink {
                     from: song_out,
-                    to: filter1_in,
+                    to: master_sum_in0,
                 })
                 .await?;
 
@@ -206,7 +213,10 @@ mod tests {
             let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
 
             let master_sum_in1 = engine
-                .call_mut(AddNodeInput::<Audio>::new(master_sum))
+                .call_mut(AddNodeInput::<Audio>::new(
+                    master_sum,
+                    SocketDirection::Input,
+                ))
                 .await?;
 
             engine
@@ -218,7 +228,7 @@ mod tests {
 
             engine.publish().await;
 
-            engine.move_playhead(engine::tick::Tick(0)).unwrap();
+            engine.move_playhead(engine::tick::Tick(0));
             engine.fire_mut(Play).await;
             println!("Playing... press enter to quit");
             let mut buf = String::new();

@@ -154,6 +154,11 @@ impl AssetRegistry {
     /// Sinc-interpolated resample of interleaved f32 samples, with proper
     /// anti-aliasing filtering. Import-time only — never called from the
     /// audio thread, so the allocations inside rubato's `process()` are fine.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
     fn resample_rubato(
         interleaved: &[f32],
         channels: u16,
@@ -169,7 +174,7 @@ impl AssetRegistry {
         let f_ratio = f64::from(to_rate) / f64::from(from_rate);
 
         let mut outdata: Vec<f32> =
-            vec![0.0; 2 * channels * (frame_count as f64 * f_ratio) as usize];
+            vec![0.0; 2 * channels * (frame_count as f64 * f_ratio).trunc() as usize];
 
         let outdata_capacity = outdata.len() / channels;
 
@@ -210,7 +215,7 @@ impl Actor for AssetActor {
 
     type Envelope = BoxedEnvelope<Self>;
 
-    fn new(_: Self::InitParams) -> Self {
+    fn new((): Self::InitParams) -> Self {
         Self::default()
     }
 

@@ -20,7 +20,6 @@ use crate::{
     },
 };
 use anyhow::Result;
-
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
@@ -112,10 +111,15 @@ impl ProjectData {
         (track_id, node_id)
     }
 
-    pub fn add_socket_to_node(&mut self, node_id: NodeID, socket: Socket) -> Result<SocketID> {
+    pub fn add_socket_to_node(
+        &mut self,
+        node_id: NodeID,
+        socket: Socket,
+        direction: SocketDirection,
+    ) -> Result<SocketID> {
         let id = self.graph.sockets.insert(SocketMeta {
             owner: node_id,
-            direction: SocketDirection::Input,
+            direction,
             kind: socket.kind,
             name: socket.name,
             visible: socket.visible,

@@ -174,7 +174,7 @@ impl Command<Mutate> for UpdateCmd {
 
     fn execute(self, actor: &mut AudioActor) -> Self::Output {
         if actor.update_tx.push(self.0).is_err() {
-            eprintln!("ring full, audio update dropped")
+            eprintln!("ring full, audio update dropped");
         }
     }
 }

@@ -56,7 +56,7 @@ impl Node for TrackReader<Audio> {
             .clips
             .range(..block_start)
             .next_back()
-            .map(|(v, c)| c)
+            .map(|(_, c)| c)
             .filter(|c| c.start + c.length > block_start);
 
         let active = lookback

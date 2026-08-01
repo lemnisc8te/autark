@@ -7,7 +7,7 @@ use crate::{
         arr::{clip::ResolvedAudioClip, track::Track},
         flow::{
             nodes::trackreader::TrackReaderState,
-            socket::{Socket, SocketID},
+            socket::{Socket, SocketDirection, SocketID},
         },
     },
 };
@@ -185,6 +185,7 @@ impl Command<Mutate> for RemoveLink {
 
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
+    pub direction: SocketDirection,
     _p: PhantomData<K>,
 }
 
@@ -192,9 +193,10 @@ impl<K: Kind> ProjectCommand for AddNodeInput<K> {}
 
 impl<K: Kind> AddNodeInput<K> {
     #[must_use]
-    pub const fn new(node_id: NodeID) -> Self {
+    pub const fn new(node_id: NodeID, direction: SocketDirection) -> Self {
         Self {
             node_id,
+            direction,
             _p: PhantomData,
         }
     }
@@ -204,7 +206,11 @@ impl<K: Kind> Command<Mutate> for AddNodeInput<K> {
     type Output = Result<SocketID>; // index of the newly created socket
     type Actor = ProjectActor;
     fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+        actor.add_socket_to_node(
+            self.node_id,
+            Socket::new(K::into_datakind(), "in", true),
+            self.direction,
+        )
     }
 }
 

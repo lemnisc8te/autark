@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::{
     marker::PhantomData,
-    pin::Pin,
     sync::Arc,
     thread::{self, JoinHandle},
 };
@@ -67,7 +66,7 @@ impl<A: Actor> Permission<A> for Ref {
         &*actor
     }
 
-    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
         self_ref.data()
     }
 }
@@ -83,7 +82,7 @@ impl<A: Actor> Permission<A> for Mutate {
         actor.pre_mutate();
     }
 
-    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
         self_ref.data_mut()
     }
 }
@@ -99,7 +98,7 @@ impl<A: Actor> Permission<A> for ActorRef {
         actor.pre_mutate();
     }
 
-    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
         self_ref
     }
 }
@@ -143,7 +142,7 @@ pub trait Envelope<A: Actor>: Send {
     fn handle(self: Box<Self>, actor: &mut A);
 }
 
-pub type BoxedEnvelope<A: Actor> = Box<dyn Envelope<A>>;
+pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
     fn handle(self: Box<Self>, actor: &mut A) {
@@ -255,7 +254,7 @@ pub struct Handle<A: Actor, T: Carrier<A>> {
     sender: Arc<Mutex<T::Sender>>,
 }
 
-pub type StdHandle<A: Actor> = Handle<A, StdCarrier<A>>;
+pub type StdHandle<A> = Handle<A, StdCarrier<A>>;
 
 impl<A: Actor, T: Carrier<A>> Clone for Handle<A, T>
 where
@@ -267,25 +266,26 @@ where
         }
     }
 }
-#[derive(Debug)]
-pub struct CommandFuture<T> {
-    rx: oneshot::Receiver<T>,
-}
 
-impl<T> Future for CommandFuture<T> {
-    type Output = T;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<T> {
-        Pin::new(&mut self.rx)
-            .poll(cx)
-            .map(|r| r.expect("project thread dropped"))
-    }
-}
+// #[derive(Debug)]
+// pub struct CommandFuture<T> {
+//     rx: oneshot::Receiver<T>,
+// }
 
-impl<T> From<oneshot::Receiver<T>> for CommandFuture<T> {
-    fn from(value: oneshot::Receiver<T>) -> Self {
-        Self { rx: value }
-    }
-}
+// impl<T> Future for CommandFuture<T> {
+//     type Output = T;
+//     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<T> {
+//         Pin::new(&mut self.rx)
+//             .poll(cx)
+//             .map(|r| r.expect("project thread dropped"))
+//     }
+// }
+
+// impl<T> From<oneshot::Receiver<T>> for CommandFuture<T> {
+//     fn from(value: oneshot::Receiver<T>) -> Self {
+//         Self { rx: value }
+//     }
+// }
 
 impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a read-only `Command` and await its result.

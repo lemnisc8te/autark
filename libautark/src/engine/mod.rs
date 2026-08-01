@@ -70,15 +70,15 @@ impl Engine {
 
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let (audio_h, audio_j) = StdManager::<AudioActor>::spawn(
+        let (audio_h, _audio_j) = StdManager::<AudioActor>::spawn(
             (config.clone(), playhead.clone()),
             DEFAULT_MANAGER_CAPACITY,
         );
 
-        let (project_h, project_join) =
+        let (project_h, _project_join) =
             StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
-        let (asset_h, asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let (asset_h, _asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
         Ok(Self {
             playhead,
@@ -100,17 +100,18 @@ impl Engine {
         self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
     }
 
+    #[must_use]
     pub const fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
 
+    #[must_use]
     pub const fn channels(&self) -> u16 {
         self.config.config.channels
     }
 
-    pub fn move_playhead(&self, to: Tick) -> Result<()> {
+    pub fn move_playhead(&self, to: Tick) {
         self.playhead.swap(to.0, Ordering::Relaxed);
-        Ok(())
     }
 }
 
