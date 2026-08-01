@@ -12,7 +12,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
-    model::flow::socket::{Socket, SocketID},
+    model::flow::socket::{InputSocketID, Socket},
 };
 
 pub mod graph;
@@ -63,7 +63,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
     fn grow_input(&mut self) -> anyhow::Result<Socket> {
         anyhow::bail!("Tried growing input arity on a fixed-arity node")
     }
-    fn shrink_input(&mut self, _socket: SocketID) -> bool {
+    fn shrink_input(&mut self, _socket: InputSocketID) -> bool {
         false
     } // true = safe to actually remove
 }

@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, collections::HashSet};
 
 use slotmap::SecondaryMap;
 
@@ -55,6 +55,85 @@ impl NodeStatePool {
             if let Some(old) = self.states.remove(id) {
                 let _ = garbage.push(Garbage::NodeState(old));
             }
+        }
+    }
+}
+
+pub trait DiffProvider {
+    type Element;
+    // Iterators must be returned by value, not by reference
+    type Additions<'a>: Iterator<Item = &'a Self::Element>
+    where
+        Self: 'a;
+    type Removals<'a>: Iterator<Item = &'a Self::Element>
+    where
+        Self: 'a;
+
+    fn additions(&self) -> Self::Additions<'_>;
+    fn removals(&self) -> Self::Removals<'_>;
+}
+
+pub trait CanDiff {
+    type Element;
+    type Provider: DiffProvider<Element = Self::Element>;
+
+    // Elements must be yielded by reference if you plan to keep the collection intact
+    type Elements<'a>: Iterator<Item = &'a Self::Element>
+    where
+        Self: 'a;
+    fn elements(&self) -> Self::Elements<'_>;
+
+    // Concrete implementation handles mutating the collection using the provider
+    fn apply_diff(&mut self, diff: &Self::Provider);
+}
+
+// 1. Define a concrete Diff Provider
+pub struct VecDiff<T> {
+    pub added: Vec<T>,
+    pub removed: Vec<T>,
+}
+
+impl<T> DiffProvider for VecDiff<T> {
+    type Element = T;
+    type Additions<'a>
+        = std::slice::Iter<'a, T>
+    where
+        T: 'a;
+    type Removals<'a>
+        = std::slice::Iter<'a, T>
+    where
+        T: 'a;
+
+    fn additions(&self) -> Self::Additions<'_> {
+        self.added.iter()
+    }
+
+    fn removals(&self) -> Self::Removals<'_> {
+        self.removed.iter()
+    }
+}
+
+// 2. Implement CanDiff for Vec<T>
+impl<T: Eq + std::hash::Hash + Clone> CanDiff for Vec<T> {
+    type Element = T;
+    type Provider = VecDiff<T>;
+    type Elements<'a>
+        = std::slice::Iter<'a, T>
+    where
+        T: 'a;
+
+    fn elements(&self) -> Self::Elements<'_> {
+        self.iter()
+    }
+
+    fn apply_diff(&mut self, diff: &Self::Provider) {
+        // Step A: Remove items
+        let to_remove: HashSet<&T> = diff.removals().collect();
+        self.retain(|item| !to_remove.contains(item));
+
+        // Step B: Add items
+        for item in diff.additions() {
+            self.push(item.clone());
         }
     }
 }

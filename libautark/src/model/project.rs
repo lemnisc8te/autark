@@ -15,7 +15,7 @@ use crate::{
             Node, NodeID,
             graph::NodeGraph,
             nodes::{master::Master, trackreader::TrackReader},
-            socket::{Socket, SocketDirection, SocketID, SocketMeta},
+            socket::{InputSocketID, OutputSocketID, Socket, SocketMeta},
         },
     },
 };
@@ -44,11 +44,15 @@ impl ProjectData {
         }
     }
 
-    pub fn remove_link(&mut self, from: SocketID, to: SocketID) -> Result<()> {
+    pub fn remove_link(&mut self, from: OutputSocketID, to: InputSocketID) -> Result<()> {
         self.graph.remove_link(from, to)
     }
 
-    pub fn add_link(&mut self, from_id: SocketID, to_id: SocketID) -> Result<Option<SocketID>> {
+    pub fn add_link(
+        &mut self,
+        from_id: OutputSocketID,
+        to_id: InputSocketID,
+    ) -> Result<Option<OutputSocketID>> {
         self.graph.add_link(from_id, to_id)
     }
 
@@ -111,20 +115,18 @@ impl ProjectData {
         (track_id, node_id)
     }
 
-    pub fn add_socket_to_node(
+    pub fn add_input_socket_to_node(
         &mut self,
         node_id: NodeID,
         socket: Socket,
-        direction: SocketDirection,
-    ) -> Result<SocketID> {
-        let id = self.graph.sockets.insert(SocketMeta {
+    ) -> Result<InputSocketID> {
+        let id = self.graph.input_sockets.insert(SocketMeta {
             owner: node_id,
-            direction,
             kind: socket.kind,
             name: socket.name,
             visible: socket.visible,
         });
-        self.graph.node_sockets[node_id].0.push(id);
+        self.graph.node_input_sockets[node_id].push(id);
         Ok(id)
     }
 
@@ -132,18 +134,18 @@ impl ProjectData {
         todo!()
     }
 
-    pub fn socket_kind_of(&mut self, endpoint: SocketID) -> Result<DataKind> {
+    pub fn socket_kind_of(&mut self, endpoint: InputSocketID) -> Result<DataKind> {
         self.graph
-            .sockets
+            .input_sockets
             .get(endpoint)
             .map(|s| s.kind)
             .ok_or(EngineError::SocketNotFound(endpoint).into())
     }
 
-    pub fn compile_graph(&self) -> Result<CompiledGraph> {
-        let order = self.graph.topo_sort()?;
+    pub fn compile_graph(&self, filter: Option<&[NodeID]>) -> Result<CompiledGraph> {
+        let order = self.graph.topo_sort(filter)?;
 
-        let mut socket_slot: HashMap<SocketID, SlotIndex> = HashMap::new();
+        let mut socket_slot: HashMap<OutputSocketID, SlotIndex> = HashMap::new();
         let mut buffer_count = 1usize; // slot 0 reserved for silence
 
         for &node_id in &order {
@@ -187,9 +189,9 @@ impl ProjectData {
 
         let master_output_slot = self
             .graph
-            .node_sockets
+            .node_output_sockets
             .get(self.master_node_id)
-            .and_then(|(_, outs)| outs.first())
+            .and_then(|outs| outs.first())
             .and_then(|&id| socket_slot.get(&id))
             .copied()
             .ok_or(EngineError::NodeNotFound(self.master_node_id))?;

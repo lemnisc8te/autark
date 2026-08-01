@@ -7,7 +7,7 @@ use crate::{
         arr::{clip::ResolvedAudioClip, track::Track},
         flow::{
             nodes::trackreader::TrackReaderState,
-            socket::{Socket, SocketDirection, SocketID},
+            socket::{InputSocketID, OutputSocketID, Socket},
         },
     },
 };
@@ -153,14 +153,14 @@ impl<N: Node> Command<Mutate> for AddNode<N> {
 }
 
 pub struct AddLink {
-    pub from: SocketID,
-    pub to: SocketID,
+    pub from: OutputSocketID,
+    pub to: InputSocketID,
 }
 
 impl ProjectCommand for AddLink {}
 
 impl Command<Mutate> for AddLink {
-    type Output = Result<Option<SocketID>>;
+    type Output = Result<Option<OutputSocketID>>;
     type Actor = ProjectActor;
 
     fn execute(self, actor: &mut ProjectData) -> Self::Output {
@@ -169,8 +169,8 @@ impl Command<Mutate> for AddLink {
 }
 
 pub struct RemoveLink {
-    pub from: SocketID,
-    pub to: SocketID,
+    pub from: OutputSocketID,
+    pub to: InputSocketID,
 }
 
 impl ProjectCommand for RemoveLink {}
@@ -185,7 +185,6 @@ impl Command<Mutate> for RemoveLink {
 
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
-    pub direction: SocketDirection,
     _p: PhantomData<K>,
 }
 
@@ -193,24 +192,19 @@ impl<K: Kind> ProjectCommand for AddNodeInput<K> {}
 
 impl<K: Kind> AddNodeInput<K> {
     #[must_use]
-    pub const fn new(node_id: NodeID, direction: SocketDirection) -> Self {
+    pub const fn to(node_id: NodeID) -> Self {
         Self {
             node_id,
-            direction,
             _p: PhantomData,
         }
     }
 }
 
 impl<K: Kind> Command<Mutate> for AddNodeInput<K> {
-    type Output = Result<SocketID>; // index of the newly created socket
+    type Output = Result<InputSocketID>; // index of the newly created socket
     type Actor = ProjectActor;
     fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_socket_to_node(
-            self.node_id,
-            Socket::new(K::into_datakind(), "in", true),
-            self.direction,
-        )
+        actor.add_input_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
     }
 }
 
@@ -287,7 +281,7 @@ pub struct InputSocketOf(pub NodeID, pub usize);
 impl ProjectCommand for InputSocketOf {}
 
 impl Command<Ref> for InputSocketOf {
-    type Output = SocketID;
+    type Output = InputSocketID;
 
     type Actor = ProjectActor;
 
@@ -301,7 +295,7 @@ pub struct OutputSocketOf(pub NodeID, pub usize);
 impl ProjectCommand for OutputSocketOf {}
 
 impl Command<Ref> for OutputSocketOf {
-    type Output = SocketID;
+    type Output = OutputSocketID;
 
     type Actor = ProjectActor;
 
@@ -314,6 +308,7 @@ impl Command<Ref> for OutputSocketOf {
 
 pub struct Publish {
     pub asset_h: StdHandle<AssetActor>,
+    pub filter: Option<Vec<NodeID>>,
 }
 
 impl ProjectCommand for Publish {}
@@ -324,7 +319,7 @@ impl Command<ActorRef> for Publish {
     type Actor = ProjectActor;
 
     fn execute(self, actor: &ProjectActor) -> Self::Output {
-        actor.publish_current(&self.asset_h)
+        actor.publish_current(&self.asset_h, self.filter.as_deref())
     }
 }
 
@@ -357,8 +352,12 @@ impl ProjectActor {
     }
 
     /// Builds the next `GraphUpdate`
-    pub fn publish_current(&self, asset_h: &StdHandle<AssetActor>) -> Result<GraphUpdate> {
-        let schedule = self.project().compile_graph()?;
+    pub fn publish_current(
+        &self,
+        asset_h: &StdHandle<AssetActor>,
+        filter: Option<&[NodeID]>,
+    ) -> Result<GraphUpdate> {
+        let schedule = self.project().compile_graph(filter)?;
 
         if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
         {

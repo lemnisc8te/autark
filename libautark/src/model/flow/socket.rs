@@ -3,7 +3,10 @@ use slotmap::new_key_type;
 
 use crate::model::{DataKind, flow::NodeID};
 
-new_key_type! {pub struct SocketID;}
+new_key_type! {
+pub struct InputSocketID;
+pub struct OutputSocketID;
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SocketDirection {
@@ -14,7 +17,6 @@ pub enum SocketDirection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketMeta {
     pub owner: NodeID,
-    pub direction: SocketDirection,
     pub kind: DataKind,
     pub name: String,
     pub visible: bool,
@@ -40,14 +42,13 @@ impl Socket {
 impl SocketMeta {
     pub fn new(
         owner: NodeID,
-        direction: SocketDirection,
         name: impl Into<String>,
         kind: DataKind,
         visible: bool,
     ) -> SocketMeta {
         Self {
             owner,
-            direction,
+
             kind,
             name: name.into(),
             visible,

@@ -89,11 +89,12 @@ impl Engine {
         })
     }
 
-    pub async fn publish(&self) {
+    pub async fn publish(&self, filter: Option<Vec<NodeID>>) {
         let update = self
             .project_h
             .meta_call(Publish {
                 asset_h: self.asset_h.clone(),
+                filter,
             })
             .await
             .unwrap();

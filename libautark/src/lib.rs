@@ -72,10 +72,7 @@ mod tests {
         },
         model::{
             Audio,
-            flow::{
-                nodes::{biquad_filter::BiquadFilter, sum::Sum},
-                socket::SocketDirection,
-            },
+            flow::nodes::{biquad_filter::BiquadFilter, sum::Sum},
             project::ProjectData,
         },
     };
@@ -128,10 +125,7 @@ mod tests {
                 })
                 .await;
             let master_sum_in0 = engine
-                .call_mut(AddNodeInput::<Audio>::new(
-                    master_sum,
-                    SocketDirection::Input,
-                ))
+                .call_mut(AddNodeInput::<Audio>::to(master_sum))
                 .await
                 .unwrap();
 
@@ -213,10 +207,7 @@ mod tests {
             let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
 
             let master_sum_in1 = engine
-                .call_mut(AddNodeInput::<Audio>::new(
-                    master_sum,
-                    SocketDirection::Input,
-                ))
+                .call_mut(AddNodeInput::<Audio>::to(master_sum))
                 .await?;
 
             engine
@@ -226,7 +217,7 @@ mod tests {
                 })
                 .await?;
 
-            engine.publish().await;
+            engine.publish(Some(vec![clap_node])).await;
 
             engine.move_playhead(engine::tick::Tick(0));
             engine.fire_mut(Play);
