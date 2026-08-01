@@ -30,12 +30,13 @@ use crate::{
     },
 };
 
-use std::{any::Any, marker::PhantomData};
+use std::{any::Any, cell::RefCell, collections::HashSet, marker::PhantomData};
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
     pub(crate) undo_stack: Vec<ProjectData>,
     pub(crate) redo_stack: Vec<ProjectData>,
+    pub(crate) known_node_ids: RefCell<HashSet<NodeID>>,
 }
 
 pub trait ProjectCommand {}
@@ -366,13 +367,8 @@ impl ProjectActor {
             anyhow::bail!("graph exceeds preallocated real-time budget; edit ignored")
         }
 
-        let old_ids: std::collections::HashSet<NodeID> = self
-            .undo_stack
-            .last()
-            .map(|proj| proj.graph.nodes.keys().collect())
-            .unwrap_or_default();
-        let new_ids: std::collections::HashSet<NodeID> =
-            self.project().graph.nodes.keys().collect();
+        let old_ids: HashSet<NodeID> = self.known_node_ids.borrow().clone();
+        let new_ids: HashSet<NodeID> = self.project().graph.nodes.keys().collect();
 
         let state_additions: Vec<_> = new_ids
             .difference(&old_ids)
@@ -391,7 +387,6 @@ impl ProjectActor {
                             (*tick, resolved)
                         })
                         .collect();
-                    dbg!(&the_clips);
 
                     (
                         id,
@@ -404,6 +399,7 @@ impl ProjectActor {
             .collect();
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
+        *self.known_node_ids.borrow_mut() = new_ids;
         Ok(GraphUpdate {
             schedule,
             state_additions,
@@ -435,6 +431,7 @@ impl Actor for ProjectActor {
             current,
             undo_stack: vec![],
             redo_stack: vec![],
+            known_node_ids: RefCell::new(HashSet::default()),
         }
     }
 }

@@ -201,22 +201,20 @@ pub struct AudioManager {}
 
 pub struct AudioTaskCarrier {}
 
-#[async_trait]
 impl Carrier<AudioActor> for AudioTaskCarrier {
-    type Sender = rtrb::Producer<BoxedEnvelope<AudioActor>>;
-    type Receiver = rtrb::Consumer<BoxedEnvelope<AudioActor>>;
+    type Sender = flume::Sender<BoxedEnvelope<AudioActor>>;
+    type Receiver = flume::Receiver<BoxedEnvelope<AudioActor>>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        rtrb::RingBuffer::new(capacity)
+        flume::bounded(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: <AudioActor as Actor>::Envelope) -> Result<()> {
-        let _ = sender.push(envelope);
+    fn send(sender: &mut Self::Sender, envelope: BoxedEnvelope<AudioActor>) -> Result<()> {
+        let _ = sender.send(envelope);
         Ok(())
     }
 
-    /// Awaits the next envelope, or `None` once the transport is closed.
-    fn recv(receiver: &mut Self::Receiver) -> Result<<AudioActor as Actor>::Envelope> {
-        Ok(receiver.pop()?)
+    fn recv(receiver: &mut Self::Receiver) -> Result<BoxedEnvelope<AudioActor>> {
+        Ok(receiver.recv()?)
     }
 }
