@@ -97,7 +97,7 @@ impl Engine {
             })
             .await
             .unwrap();
-        self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
+        self.audio_h.fire_mut(UpdateCmd(update)).unwrap();
     }
 
     #[must_use]
@@ -156,19 +156,19 @@ impl Engine {
         HasHandle::<C::Actor>::handle(self).call_mut(command).await
     }
 
-    pub async fn notify<C>(&self, command: C)
+    pub fn notify<C>(&self, command: C)
     where
         C: Command<Ref> + IntoEnvelope<Ref>,
         Self: HasHandle<C::Actor>,
     {
-        let _ = HasHandle::<C::Actor>::handle(self).notify(command).await;
+        let _ = HasHandle::<C::Actor>::handle(self).notify(command);
     }
 
-    pub async fn fire_mut<C>(&self, command: C)
+    pub fn fire_mut<C>(&self, command: C)
     where
         C: Command<Mutate> + IntoEnvelope<Mutate>,
         Self: HasHandle<C::Actor>,
     {
-        let _ = HasHandle::<C::Actor>::handle(self).fire_mut(command).await;
+        let _ = HasHandle::<C::Actor>::handle(self).fire_mut(command);
     }
 }

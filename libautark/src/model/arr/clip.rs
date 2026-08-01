@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::new_key_type;
-use tokio::runtime::Builder;
 
 use crate::{
     engine::{
@@ -71,12 +70,8 @@ pub struct ResolvedAudioClip {
 
 impl ResolvedAudioClip {
     pub fn from_clip(clip: AudioClip, asset_h: StdHandle<AssetActor>) -> Self {
-        let rt = Builder::new_current_thread().build().unwrap();
-
         // Block the main thread until the future completes
-        let asset = rt
-            .block_on(async { asset_h.call(GetAudioAsset(clip.asset_id)).await })
-            .unwrap();
+        let asset = asset_h.call_blocking(GetAudioAsset(clip.asset_id)).unwrap();
         ResolvedAudioClip {
             start: clip.start,
             length: clip.length,

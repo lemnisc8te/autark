@@ -211,12 +211,12 @@ impl Carrier<AudioActor> for AudioTaskCarrier {
         flume::bounded(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: BoxedEnvelope<AudioActor>) -> Result<()> {
+    fn send(sender: &Self::Sender, envelope: BoxedEnvelope<AudioActor>) -> Result<()> {
         let _ = sender.send(envelope);
         Ok(())
     }
 
-    fn recv(receiver: &mut Self::Receiver) -> Result<BoxedEnvelope<AudioActor>> {
+    fn recv(receiver: &Self::Receiver) -> Result<BoxedEnvelope<AudioActor>> {
         Ok(receiver.recv()?)
     }
 }

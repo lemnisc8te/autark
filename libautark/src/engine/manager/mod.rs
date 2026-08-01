@@ -2,10 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::{
     marker::PhantomData,
-    sync::Arc,
     thread::{self, JoinHandle},
 };
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::oneshot;
 
 pub mod asset;
 pub mod audio;
@@ -210,13 +209,13 @@ pub trait Carrier<A: Actor>: Send {
     ///
     /// # Errors
     /// - Implementation specific
-    fn send(sender: &mut Self::Sender, envelope: A::Envelope) -> Result<()>;
+    fn send(sender: &Self::Sender, envelope: A::Envelope) -> Result<()>;
 
     /// Awaits the next envelope, or `None` once the transport is closed.
     ///
     /// # Errors
     /// - Implementation Specific
-    fn recv(receiver: &mut Self::Receiver) -> Result<A::Envelope>;
+    fn recv(receiver: &Self::Receiver) -> Result<A::Envelope>;
 }
 
 pub struct StdCarrier<A: Actor> {
@@ -232,12 +231,12 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
         flume::bounded(capacity)
     }
 
-    fn send(sender: &mut Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
+    fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
         let _ = sender.send(envelope);
         Ok(())
     }
 
-    fn recv(receiver: &mut Self::Receiver) -> Result<<A as Actor>::Envelope> {
+    fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
         Ok(receiver.recv()?)
     }
 }
@@ -251,7 +250,7 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
 /// (`notify` / `cast_mut`) — both funneling into the same `Envelope`
 /// generic over `ReplyPort`.
 pub struct Handle<A: Actor, T: Carrier<A>> {
-    sender: Arc<Mutex<T::Sender>>,
+    sender: T::Sender,
 }
 
 pub type StdHandle<A> = Handle<A, StdCarrier<A>>;
@@ -288,26 +287,43 @@ where
 // }
 
 impl<A: Actor, T: Carrier<A>> Handle<A, T> {
+    fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
+    where
+        P: Permission<A>,
+        C: IntoEnvelope<P, Actor = A>,
+        R: ReplyPort<C::Output> + 'static,
+    {
+        let envelope = command.into_envelope::<T, _>(reply);
+        T::send(&self.sender, envelope) // no lock needed now
+    }
+
     /// Run a read-only `Command` and await its result.
     pub async fn call<C>(&self, command: C) -> C::Output
     where
         C: IntoEnvelope<Ref, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        let envelope = command.into_envelope::<T, _>(Reply(tx));
-        let _ = T::send(&mut *self.sender.lock().await, envelope);
-        rx.await.unwrap()
+        self.send_envelope(command, Reply(tx)).ok();
+        rx.await.expect("actor dropped")
+    }
+
+    pub fn call_blocking<C>(&self, command: C) -> C::Output
+    where
+        C: IntoEnvelope<Ref, Actor = A>,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.send_envelope(command, Reply(tx)).ok();
+        rx.blocking_recv().expect("actor thread dropped")
     }
 
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
-    pub async fn notify<C>(&self, command: C) -> Result<()>
+    pub fn notify<C>(&self, command: C) -> Result<()>
     where
         C: IntoEnvelope<Ref, Actor = A>,
     {
-        let envelope = command.into_envelope::<T, _>(NoReply);
-        T::send(&mut *self.sender.lock().await, envelope)
+        self.send_envelope(command, NoReply)
     }
 
     /// Run a `MutatingCommand` and await its result.
@@ -316,19 +332,18 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
         C: IntoEnvelope<Mutate, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        let envelope = command.into_envelope::<T, _>(Reply(tx));
-        let _ = T::send(&mut *self.sender.lock().await, envelope);
+        self.send_envelope(command, Reply(tx)).ok();
         rx.await.unwrap()
     }
 
     /// Enqueue a `MutatingCommand` without waiting for its result
     /// ("cast" in classic actor-model terms — fire and forget).
-    pub async fn fire_mut<C>(&self, command: C) -> Result<()>
+    pub fn fire_mut<C>(&self, command: C) -> Result<()>
     where
         C: IntoEnvelope<Mutate, Actor = A>,
     {
         let envelope = command.into_envelope::<T, _>(NoReply);
-        T::send(&mut *self.sender.lock().await, envelope)
+        T::send(&self.sender, envelope)
     }
 
     /// Run a `Meta` command and await its result.
@@ -337,8 +352,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
         C: IntoEnvelope<ActorRef, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        let envelope = command.into_envelope::<T, _>(Reply(tx));
-        let _ = T::send(&mut *self.sender.lock().await, envelope);
+        self.send_envelope(command, Reply(tx)).ok();
         rx.await.unwrap()
     }
 }
@@ -373,7 +387,7 @@ where
         mailbox_capacity: usize,
     ) -> (Handle<A, Self::Carrier>, JoinHandle<A>) {
         let mut actor = A::new(params);
-        let (sender, mut receiver) = Self::Carrier::pair(mailbox_capacity);
+        let (sender, receiver) = Self::Carrier::pair(mailbox_capacity);
 
         let joiner = thread::spawn(move || {
             actor.on_start();
@@ -381,7 +395,7 @@ where
             // Sequential execution guarantee: exactly one envelope is
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
-            while let Ok(envelope) = Self::Carrier::recv(&mut receiver) {
+            while let Ok(envelope) = Self::Carrier::recv(&receiver) {
                 Box::new(envelope).handle(&mut actor);
             }
 
@@ -389,12 +403,7 @@ where
             actor
         });
 
-        (
-            Handle {
-                sender: Arc::new(sender.into()),
-            },
-            joiner,
-        )
+        (Handle { sender }, joiner)
     }
 }
 

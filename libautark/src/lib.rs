@@ -49,11 +49,11 @@
 pub mod engine;
 pub mod model;
 
-// use assert_no_alloc::*;
+use assert_no_alloc::*;
 
-// #[cfg(debug_assertions)] // required when disable_release is set (default)
-// #[global_allocator]
-// static A: AllocDisabler = AllocDisabler;
+#[cfg(debug_assertions)] // required when disable_release is set (default)
+#[global_allocator]
+static A: AllocDisabler = AllocDisabler;
 
 #[cfg(test)]
 mod tests {
@@ -106,21 +106,21 @@ mod tests {
                 ))
                 .await?;
 
-            // let filter1 = engine
-            //     .call_mut(AddNode {
-            //         node: BiquadFilter::new(
-            //             engine.channels(),
-            //             model::flow::nodes::biquad_filter::FilterType::HighPass,
-            //             engine.sample_rate(),
-            //             1600.0,
-            //             BiquadFilter::BUTTERWORTH_Q,
-            //             0.0,
-            //         ),
-            //     })
-            //     .await;
+            let filter1 = engine
+                .call_mut(AddNode {
+                    node: BiquadFilter::new(
+                        engine.channels(),
+                        model::flow::nodes::biquad_filter::FilterType::HighPass,
+                        engine.sample_rate(),
+                        1600.0,
+                        BiquadFilter::BUTTERWORTH_Q,
+                        0.0,
+                    ),
+                })
+                .await;
 
-            // let filter1_in = engine.get(InputSocketOf(filter1, 0)).await;
-            // let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
+            let filter1_in = engine.get(InputSocketOf(filter1, 0)).await;
+            let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
 
             let master_sum = engine
                 .call_mut(AddNode {
@@ -137,12 +137,12 @@ mod tests {
 
             let master_sum_out = engine.get(OutputSocketOf(master_sum, 0)).await;
 
-            // engine
-            //     .call_mut(AddLink {
-            //         from: filter1_out,
-            //         to: master_sum_in0,
-            //     })
-            //     .await?;
+            engine
+                .call_mut(AddLink {
+                    from: filter1_out,
+                    to: master_sum_in0,
+                })
+                .await?;
 
             engine
                 .call_mut(AddLink {
@@ -164,7 +164,7 @@ mod tests {
             engine
                 .call_mut(AddLink {
                     from: song_out,
-                    to: master_sum_in0,
+                    to: filter1_in,
                 })
                 .await?;
 
@@ -229,11 +229,11 @@ mod tests {
             engine.publish().await;
 
             engine.move_playhead(engine::tick::Tick(0));
-            engine.fire_mut(Play).await;
+            engine.fire_mut(Play);
             println!("Playing... press enter to quit");
             let mut buf = String::new();
             std::io::stdin().read_line(&mut buf).unwrap();
-            engine.fire_mut(TransportCmd(TransportState::Stopped)).await;
+            engine.fire_mut(TransportCmd(TransportState::Stopped));
             Ok::<_, anyhow::Error>(())
         })
         .unwrap();

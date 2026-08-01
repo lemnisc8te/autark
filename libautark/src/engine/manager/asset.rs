@@ -136,14 +136,14 @@ impl AssetRegistry {
         }
         let resampled =
             Self::resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
-
+        let len = resampled.len();
         let audio_asset = AudioAsset {
             payload: AudioAssetPayload::Resident(Arc::from(resampled)),
             channels,
             sample_rate: target_sample_rate,
             gain: 1.0,
             path,
-            len: total_sample_count,
+            len,
         };
 
         let new_key = self.audio.insert(audio_asset);
