@@ -1,0 +1,112 @@
+//! Module for Flow related types
+use std::{
+    any::Any,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
+
+use dyn_clone::DynClone;
+use slotmap::new_key_type;
+
+use crate::{
+    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
+    model::flow::socket::{Socket, SocketID},
+};
+
+pub mod graph;
+pub mod nodes;
+pub mod socket;
+
+new_key_type! {
+    pub struct NodeID;
+}
+
+#[derive(Debug, Clone)]
+pub struct Param(Arc<AtomicU32>); // f32 via to_bits/from_bits
+
+impl Param {
+    pub fn new(v: f32) -> Self {
+        Self(Arc::new(AtomicU32::new(v.to_bits())))
+    }
+    #[inline]
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+    #[inline]
+    pub fn set(&self, v: f32) {
+        self.0.store(v.to_bits(), Ordering::Relaxed);
+    }
+}
+
+pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
+    type State: Send + 'static;
+
+    fn spec_in(&self) -> Vec<Socket>;
+    fn spec_out(&self) -> Vec<Socket>;
+
+    /// Fresh runtime state for a new instance of this node, built off the
+    /// audio thread (control thread, inside `publish_current`) and handed
+    /// over pre-built.
+    fn init_state(&self) -> Self::State;
+
+    fn process(
+        &self,
+        pool: &mut PoolExecutor,
+        state: &mut Self::State,
+        block_start: Tick,
+        inputs: &[SlotIndex],
+        outputs: &[SlotIndex],
+    );
+
+    fn grow_input(&mut self) -> anyhow::Result<Socket> {
+        anyhow::bail!("Tried growing input arity on a fixed-arity node")
+    }
+    fn shrink_input(&mut self, _socket: SocketID) -> bool {
+        false
+    } // true = safe to actually remove
+}
+
+pub trait MultiInputNode: ErasedNode {}
+
+pub trait ErasedNode: std::fmt::Debug + DynClone + Send + Sync + 'static {
+    fn spawn_state(&self) -> Box<dyn Any + Send>;
+    fn process_erased(
+        &self,
+        pool: &mut PoolExecutor,
+        state: &mut dyn Any,
+        block_start: Tick,
+        inputs: &[SlotIndex],
+        outputs: &[SlotIndex],
+    );
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn as_any(&self) -> &dyn Any;
+}
+
+dyn_clone::clone_trait_object!(ErasedNode);
+
+impl<N: Node> ErasedNode for N {
+    fn spawn_state(&self) -> Box<dyn Any + Send> {
+        Box::new(self.init_state())
+    }
+
+    fn process_erased(
+        &self,
+        pool: &mut PoolExecutor,
+        state: &mut dyn Any,
+        block_start: Tick,
+        inputs: &[SlotIndex],
+        outputs: &[SlotIndex],
+    ) {
+        let state = state.downcast_mut::<N::State>().unwrap();
+        self.process(pool, state, block_start, inputs, outputs);
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
