@@ -220,6 +220,29 @@ pub trait Carrier<A: Actor>: Send {
     fn recv(receiver: &mut Self::Receiver) -> Result<A::Envelope>;
 }
 
+pub struct StdCarrier<A: Actor> {
+    _p: PhantomData<A>,
+}
+
+#[async_trait]
+impl<A: Actor> Carrier<A> for StdCarrier<A> {
+    type Sender = flume::Sender<<A as Actor>::Envelope>;
+    type Receiver = flume::Receiver<<A as Actor>::Envelope>;
+
+    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
+        flume::bounded(capacity)
+    }
+
+    fn send(sender: &mut Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
+        let _ = sender.send(envelope);
+        Ok(())
+    }
+
+    fn recv(receiver: &mut Self::Receiver) -> Result<<A as Actor>::Envelope> {
+        Ok(receiver.recv()?)
+    }
+}
+
 /// A cloneable, `Send + Sync` handle to a running actor.
 ///
 /// This is what
@@ -231,6 +254,8 @@ pub trait Carrier<A: Actor>: Send {
 pub struct Handle<A: Actor, T: Carrier<A>> {
     sender: Arc<Mutex<T::Sender>>,
 }
+
+pub type StdHandle<A: Actor> = Handle<A, StdCarrier<A>>;
 
 impl<A: Actor, T: Carrier<A>> Clone for Handle<A, T>
 where
@@ -335,18 +360,20 @@ pub trait Manager<A: Actor> {
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
 /// runtime, using whichever `Transport` is specified.
-pub struct StdManager<T>(PhantomData<T>);
+pub struct StdManager<A: Actor>(PhantomData<A>);
 
-impl<A, T> Manager<A> for StdManager<T>
+impl<A> Manager<A> for StdManager<A>
 where
     A: Actor,
-    T: Carrier<A>,
 {
-    type Carrier = T;
+    type Carrier = StdCarrier<A>;
 
-    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A, T>, JoinHandle<A>) {
+    fn spawn(
+        params: A::InitParams,
+        mailbox_capacity: usize,
+    ) -> (Handle<A, Self::Carrier>, JoinHandle<A>) {
         let mut actor = A::new(params);
-        let (sender, mut receiver) = T::pair(mailbox_capacity);
+        let (sender, mut receiver) = Self::Carrier::pair(mailbox_capacity);
 
         let joiner = thread::spawn(move || {
             actor.on_start();
@@ -354,7 +381,7 @@ where
             // Sequential execution guarantee: exactly one envelope is
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
-            while let Ok(envelope) = T::recv(&mut receiver) {
+            while let Ok(envelope) = Self::Carrier::recv(&mut receiver) {
                 Box::new(envelope).handle(&mut actor);
             }
 

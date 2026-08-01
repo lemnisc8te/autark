@@ -5,8 +5,8 @@ use tokio::runtime::Builder;
 use crate::{
     engine::{
         manager::{
-            Handle,
-            asset::{AssetActor, AssetTaskCarrier, GetAudioAsset},
+            StdHandle,
+            asset::{AssetActor, GetAudioAsset},
             project::ProjectActor,
         },
         tick::Tick,
@@ -70,7 +70,7 @@ pub struct ResolvedAudioClip {
 }
 
 impl ResolvedAudioClip {
-    pub fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor, AssetTaskCarrier>) -> Self {
+    pub fn from_clip(clip: AudioClip, asset_h: StdHandle<AssetActor>) -> Self {
         let rt = Builder::new_current_thread().build().unwrap();
 
         // Block the main thread until the future completes

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    engine::manager::{Actor, BoxedEnvelope, Carrier, Command, Mutate, Ref},
+    engine::manager::{Actor, BoxedEnvelope, Command, Mutate, Ref},
     model::asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
 };
 
@@ -220,25 +220,5 @@ impl Actor for AssetActor {
 
     fn data_mut(&mut self) -> &mut Self::Data {
         &mut self.reg
-    }
-}
-
-pub struct AssetTaskCarrier;
-
-impl Carrier<AssetActor> for AssetTaskCarrier {
-    type Sender = flume::Sender<<AssetActor as Actor>::Envelope>;
-    type Receiver = flume::Receiver<<AssetActor as Actor>::Envelope>;
-
-    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        flume::bounded(capacity)
-    }
-
-    fn send(sender: &mut Self::Sender, envelope: <AssetActor as Actor>::Envelope) -> Result<()> {
-        let _ = sender.send(envelope);
-        Ok(())
-    }
-
-    fn recv(receiver: &mut Self::Receiver) -> Result<<AssetActor as Actor>::Envelope> {
-        Ok(receiver.recv()?)
     }
 }

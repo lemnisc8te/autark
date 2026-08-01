@@ -12,8 +12,10 @@ pub mod transport;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::audio::UpdateCmd;
-use crate::engine::manager::project::Publish;
+use crate::engine::manager::asset::AssetActor;
+use crate::engine::manager::audio::{AudioActor, UpdateCmd};
+use crate::engine::manager::project::{ProjectActor, Publish};
+use crate::engine::manager::{StdCarrier, StdHandle};
 use crate::model::flow::{ErasedNode, NodeID};
 use crate::{
     engine::{
@@ -21,7 +23,6 @@ use crate::{
         engineconfig::EngineConfig,
         manager::{
             Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Ref, StdManager,
-            asset::AssetTaskCarrier, audio::AudioTaskCarrier, project::ProjectTaskCarrier,
         },
         tick::Tick,
     },
@@ -49,9 +50,9 @@ pub struct CompiledGraph {
 pub struct Engine {
     pub playhead: Arc<AtomicU64>,
     config: EngineConfig,
-    asset_h: Handle<manager::asset::AssetActor, AssetTaskCarrier>,
-    project_h: Handle<manager::project::ProjectActor, ProjectTaskCarrier>,
-    audio_h: Handle<manager::audio::AudioActor, AudioTaskCarrier>,
+    asset_h: StdHandle<AssetActor>,
+    project_h: StdHandle<ProjectActor>,
+    audio_h: StdHandle<AudioActor>,
 }
 
 impl Engine {
@@ -69,16 +70,15 @@ impl Engine {
 
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let (audio_h, audio_j) = StdManager::<AudioTaskCarrier>::spawn(
+        let (audio_h, audio_j) = StdManager::<AudioActor>::spawn(
             (config.clone(), playhead.clone()),
             DEFAULT_MANAGER_CAPACITY,
         );
 
         let (project_h, project_join) =
-            StdManager::<ProjectTaskCarrier>::spawn(project, DEFAULT_MANAGER_CAPACITY);
+            StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
-        let (asset_h, asset_j) =
-            StdManager::<AssetTaskCarrier>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let (asset_h, asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
 
         Ok(Self {
             playhead,
@@ -119,21 +119,21 @@ pub trait HasHandle<A: Actor> {
     fn handle(&self) -> &Handle<A, Self::Carrier>;
 }
 
-impl HasHandle<manager::project::ProjectActor> for Engine {
-    type Carrier = ProjectTaskCarrier;
-    fn handle(&self) -> &Handle<manager::project::ProjectActor, ProjectTaskCarrier> {
+impl HasHandle<ProjectActor> for Engine {
+    type Carrier = StdCarrier<ProjectActor>;
+    fn handle(&self) -> &StdHandle<ProjectActor> {
         &self.project_h
     }
 }
-impl HasHandle<manager::asset::AssetActor> for Engine {
-    type Carrier = AssetTaskCarrier;
-    fn handle(&self) -> &Handle<manager::asset::AssetActor, AssetTaskCarrier> {
+impl HasHandle<AssetActor> for Engine {
+    type Carrier = StdCarrier<AssetActor>;
+    fn handle(&self) -> &StdHandle<AssetActor> {
         &self.asset_h
     }
 }
-impl HasHandle<manager::audio::AudioActor> for Engine {
-    type Carrier = AudioTaskCarrier;
-    fn handle(&self) -> &Handle<manager::audio::AudioActor, AudioTaskCarrier> {
+impl HasHandle<AudioActor> for Engine {
+    type Carrier = StdCarrier<AudioActor>;
+    fn handle(&self) -> &StdHandle<AudioActor> {
         &self.audio_h
     }
 }

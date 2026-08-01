@@ -1,7 +1,6 @@
 use crate::{
     engine::manager::{
-        ActorRef, BoxedEnvelope, Carrier, Command, Handle, Mutate, Ref,
-        asset::{AssetActor, AssetTaskCarrier},
+        ActorRef, BoxedEnvelope, Command, Mutate, Ref, StdHandle, asset::AssetActor,
     },
     model::{
         Audio,
@@ -14,7 +13,6 @@ use crate::{
 };
 use anyhow::Result;
 use anyhow::anyhow;
-use async_trait::async_trait;
 
 use crate::{
     engine::{
@@ -309,7 +307,7 @@ impl Command<Ref> for OutputSocketOf {
 // Actor Metacommands
 
 pub struct Publish {
-    pub asset_h: Handle<AssetActor, AssetTaskCarrier>,
+    pub asset_h: StdHandle<AssetActor>,
 }
 
 impl ProjectCommand for Publish {}
@@ -353,10 +351,7 @@ impl ProjectActor {
     }
 
     /// Builds the next `GraphUpdate`
-    pub fn publish_current(
-        &self,
-        asset_h: &Handle<AssetActor, AssetTaskCarrier>,
-    ) -> Result<GraphUpdate> {
+    pub fn publish_current(&self, asset_h: &StdHandle<AssetActor>) -> Result<GraphUpdate> {
         let schedule = self.project().compile_graph()?;
 
         if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
@@ -433,26 +428,5 @@ impl Actor for ProjectActor {
             redo_stack: vec![],
             known_node_ids: RefCell::new(HashSet::default()),
         }
-    }
-}
-
-pub struct ProjectTaskCarrier;
-
-#[async_trait]
-impl Carrier<ProjectActor> for ProjectTaskCarrier {
-    type Sender = flume::Sender<<ProjectActor as Actor>::Envelope>;
-    type Receiver = flume::Receiver<<ProjectActor as Actor>::Envelope>;
-
-    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        flume::bounded(capacity)
-    }
-
-    fn send(sender: &mut Self::Sender, envelope: <ProjectActor as Actor>::Envelope) -> Result<()> {
-        let _ = sender.send(envelope);
-        Ok(())
-    }
-
-    fn recv(receiver: &mut Self::Receiver) -> Result<<ProjectActor as Actor>::Envelope> {
-        Ok(receiver.recv()?)
     }
 }
