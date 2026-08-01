@@ -27,8 +27,6 @@ pub trait Actor: Send + Sized + 'static {
 
     fn pre_mutate(&mut self) {}
 
-    fn post_mutate(&mut self) {}
-
     fn data(&self) -> &Self::Data;
 
     fn data_mut(&mut self) -> &mut Self::Data;
@@ -45,18 +43,31 @@ pub struct Ref;
 pub struct Mutate;
 pub struct ActorRef;
 
-pub trait Permission<A: Actor>: Send {
+pub trait Permission<A: Actor>: Send + 'static {
     type In<'r>;
     type Type<'r>;
 
-    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a>;
+    /// Narrows the actor-thread's exclusive `&mut A` down to whatever
+    /// this permission is allowed to see (`&A` for `Ref`/`ActorRef`,
+    /// `&mut A` for `Mutate`).
+    fn reborrow(actor: &mut A) -> Self::In<'_>;
+
+    /// Runs once per envelope, before `data`/`execute`. No-op for `Ref`;
+    /// `Mutate`/`ActorRef` use it to commit the pre-mutation undo entry.
+    fn pre_hook(_actor: &mut A) {}
+
+    fn data(self_ref: Self::In<'_>) -> Self::Type<'_>;
 }
 
 impl<A: Actor> Permission<A> for Ref {
     type In<'r> = &'r A;
     type Type<'r> = &'r A::Data;
 
-    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn reborrow(actor: &mut A) -> Self::In<'_> {
+        &*actor
+    }
+
+    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
         self_ref.data()
     }
 }
@@ -64,7 +75,15 @@ impl<A: Actor> Permission<A> for Mutate {
     type In<'r> = &'r mut A;
     type Type<'r> = &'r mut A::Data;
 
-    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn reborrow(actor: &mut A) -> Self::In<'_> {
+        actor
+    }
+
+    fn pre_hook(actor: &mut A) {
+        actor.pre_mutate();
+    }
+
+    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
         self_ref.data_mut()
     }
 }
@@ -72,7 +91,15 @@ impl<A: Actor> Permission<A> for ActorRef {
     type In<'r> = &'r A;
     type Type<'r> = &'r A;
 
-    fn data<'a>(self, self_ref: Self::In<'a>) -> Self::Type<'a> {
+    fn reborrow(actor: &mut A) -> Self::In<'_> {
+        &*actor
+    }
+
+    fn pre_hook(actor: &mut A) {
+        actor.pre_mutate();
+    }
+
+    fn data<'a>(self_ref: Self::In<'a>) -> Self::Type<'a> {
         self_ref
     }
 }
@@ -133,12 +160,12 @@ where
     command: C,
     reply: R,
     _actor: PhantomData<fn(P) -> A>,
-    // _perm: PhantomData<P>,
 }
 
-impl<C> IntoEnvelope<Ref> for C
+impl<C, P> IntoEnvelope<P> for C
 where
-    C: Command<Ref>,
+    P: Permission<C::Actor>,
+    C: Command<P>,
     C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
 {
     fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
@@ -154,77 +181,17 @@ where
     }
 }
 
-impl<C> IntoEnvelope<Mutate> for C
+impl<A: Actor, P: Permission<A>, C, R> Envelope<A> for StdEnvelope<A, P, C, R>
 where
-    C: Command<Mutate>,
-    C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
-{
-    fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
-    where
-        T: Carrier<C::Actor>,
-        R: ReplyPort<Self::Output> + 'static,
-    {
-        Box::new(StdEnvelope {
-            command: self,
-            reply,
-            _actor: PhantomData,
-        })
-    }
-}
-
-impl<C> IntoEnvelope<ActorRef> for C
-where
-    C: Command<ActorRef>,
-    C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
-{
-    fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
-    where
-        T: Carrier<C::Actor>,
-        R: ReplyPort<Self::Output> + 'static,
-    {
-        Box::new(StdEnvelope {
-            command: self,
-            reply,
-            _actor: PhantomData,
-        })
-    }
-}
-
-impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Ref, C, R>
-where
-    C: Command<Ref, Actor = A>,
+    C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
 {
     fn handle(self: Box<Self>, actor: &mut A) {
         let Self { command, reply, .. } = *self;
-        let output = command.execute(actor.data());
-        reply.send(output);
-    }
-}
-
-impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, Mutate, C, R>
-where
-    C: Command<Mutate, Actor = A>,
-    R: ReplyPort<C::Output>,
-{
-    fn handle(self: Box<Self>, actor: &mut A) {
-        let Self { command, reply, .. } = *self;
-        actor.pre_mutate();
-        let output = command.execute(actor.data_mut());
+        P::pre_hook(actor);
+        let input = P::reborrow(actor);
+        let output = command.execute(P::data(input));
         // actor.post_mutate();
-        reply.send(output);
-    }
-}
-
-impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, ActorRef, C, R>
-where
-    C: Command<ActorRef, Actor = A>,
-    R: ReplyPort<C::Output>,
-{
-    fn handle(self: Box<Self>, actor: &mut A) {
-        let Self { command, reply, .. } = *self;
-        actor.pre_mutate();
-        let output = command.execute(actor);
         reply.send(output);
     }
 }
