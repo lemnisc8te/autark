@@ -58,8 +58,8 @@ impl ProjectData {
 
     pub fn move_clip<K>(
         &mut self,
-        track: <K::Track as Stored>::Id,
-        clip: <K::Clip as Stored>::Id,
+        track: <K::Track as Stored>::ID,
+        clip: <K::Clip as Stored>::ID,
         new_start: Tick,
     ) -> Result<()>
     where
@@ -80,11 +80,11 @@ impl ProjectData {
 
     pub fn add_clip_to_track<K>(
         &mut self,
-        track: <K::Track as Stored>::Id,
+        track: <K::Track as Stored>::ID,
         start: Tick,
         length: Tick,
-        asset_id: <K::Asset as Stored>::Id,
-    ) -> Result<<K::Clip as Stored>::Id>
+        asset_id: <K::Asset as Stored>::ID,
+    ) -> Result<<K::Clip as Stored>::ID>
     where
         K: Kind,
         K::Track: Stored<Actor = ProjectActor>,
@@ -102,7 +102,7 @@ impl ProjectData {
         &mut self,
         name: String,
         channels: u16,
-    ) -> (<K::Track as Stored>::Id, NodeID)
+    ) -> (<K::Track as Stored>::ID, NodeID)
     where
         TrackReader<K>: Node,
         K::Track: Stored<Actor = ProjectActor>,

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    engine::manager::{Actor, BoxedEnvelope, Command, Mutate, Ref},
+    engine::manager::{Actor, BoxedEnvelope, Mutate},
     model::asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
 };
 
@@ -27,29 +27,7 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub struct GetAudioAsset(pub AudioAssetID);
-
-impl Command<Ref> for GetAudioAsset {
-    type Output = Option<AudioAsset>;
-
-    type Actor = AssetActor;
-
-    fn execute(self, actor: <Ref as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        actor.audio.get(self.0).cloned()
-    }
-}
-
-pub struct LoadAudioAsset(pub PathBuf, pub u32);
-
-impl Command<Mutate> for LoadAudioAsset {
-    type Output = Result<AudioAssetID>;
-
-    type Actor = AssetActor;
-
-    fn execute(self, actor: <Mutate as super::Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        actor.load_audio_asset(self.0, self.1)
-    }
-}
+pub mod commands;
 
 #[derive(Debug, Default)]
 pub struct AssetRegistry {

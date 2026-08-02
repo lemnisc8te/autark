@@ -92,13 +92,9 @@ pub trait Renderable: Send {
 }
 
 pub trait Stored: Sized {
-    type Id: Key + Serialize + DeserializeOwned + Send + 'static;
+    type ID: Key + Serialize + DeserializeOwned + Send + 'static;
     type Actor: Actor;
-    // fn access<'a>(loc: <Ref as Permission<Self::Actor>>::Type<'a>) -> &'a SlotMap<Self::Id, Self>;
 
-    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::Id, Self>;
-    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::Id, Self>;
-    // fn access_mut<'a>(
-    //     loc: <Mutate as Permission<Self::Actor>>::Type<'a>,
-    // ) -> &'a mut SlotMap<Self::Id, Self>;
+    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::ID, Self>;
+    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::ID, Self>;
 }

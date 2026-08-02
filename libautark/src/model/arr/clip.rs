@@ -5,7 +5,7 @@ use crate::{
     engine::{
         manager::{
             StdHandle,
-            asset::{AssetActor, GetAudioAsset},
+            asset::{AssetActor, commands::AudioAssetFromID},
             project::ProjectActor,
         },
         tick::Tick,
@@ -22,7 +22,7 @@ new_key_type! {
 }
 
 pub trait Clip<K: Kind>: Sized + Serialize + DeserializeOwned {
-    fn new(start: Tick, length: Tick, asset_id: <K::Asset as Stored>::Id) -> Self;
+    fn new(start: Tick, length: Tick, asset_id: <K::Asset as Stored>::ID) -> Self;
 
     fn start_mut(&mut self) -> &mut Tick;
 }
@@ -35,20 +35,20 @@ pub struct AudioClip {
 }
 
 impl Stored for AudioClip {
-    type Id = AudioClipID;
+    type ID = AudioClipID;
     type Actor = ProjectActor;
 
-    fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+    fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
         &project.clips
     }
 
-    fn access_mut(project: &mut ProjectData) -> &mut slotmap::SlotMap<Self::Id, Self> {
+    fn access_mut(project: &mut ProjectData) -> &mut slotmap::SlotMap<Self::ID, Self> {
         &mut project.clips
     }
 }
 
 impl Clip<Audio> for AudioClip {
-    fn new(start: Tick, length: Tick, asset_id: <<Audio as Kind>::Asset as Stored>::Id) -> Self {
+    fn new(start: Tick, length: Tick, asset_id: <<Audio as Kind>::Asset as Stored>::ID) -> Self {
         Self {
             start,
             length,
@@ -71,7 +71,9 @@ pub struct ResolvedAudioClip {
 impl ResolvedAudioClip {
     pub fn from_clip(clip: AudioClip, asset_h: StdHandle<AssetActor>) -> Self {
         // Block the main thread until the future completes
-        let asset = asset_h.call_blocking(GetAudioAsset(clip.asset_id)).unwrap();
+        let asset = asset_h
+            .call_blocking(AudioAssetFromID(clip.asset_id))
+            .unwrap();
         ResolvedAudioClip {
             start: clip.start,
             length: clip.length,

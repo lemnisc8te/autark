@@ -41,18 +41,18 @@ pub enum AudioAssetPayload {
 }
 
 impl Stored for AudioAsset {
-    type Id = AudioAssetID;
+    type ID = AudioAssetID;
     type Actor = AssetActor;
 
     fn access(
         loc: &<Self::Actor as crate::engine::manager::Actor>::Data,
-    ) -> &slotmap::SlotMap<Self::Id, Self> {
+    ) -> &slotmap::SlotMap<Self::ID, Self> {
         &loc.audio
     }
 
     fn access_mut(
         loc: &mut <Self::Actor as crate::engine::manager::Actor>::Data,
-    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
+    ) -> &mut slotmap::SlotMap<Self::ID, Self> {
         &mut loc.audio
     }
 }

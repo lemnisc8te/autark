@@ -37,9 +37,9 @@ pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
         R: ReplyPort<Self::Output> + 'static;
 }
 
-pub struct Ref;
+pub struct Query;
 pub struct Mutate;
-pub struct ActorRef;
+pub struct Meta;
 
 pub trait Permission<A: Actor>: Send + 'static {
     type In<'r>;
@@ -57,7 +57,7 @@ pub trait Permission<A: Actor>: Send + 'static {
     fn data(self_ref: Self::In<'_>) -> Self::Type<'_>;
 }
 
-impl<A: Actor> Permission<A> for Ref {
+impl<A: Actor> Permission<A> for Query {
     type In<'r> = &'r A;
     type Type<'r> = &'r A::Data;
 
@@ -85,12 +85,12 @@ impl<A: Actor> Permission<A> for Mutate {
         self_ref.data_mut()
     }
 }
-impl<A: Actor> Permission<A> for ActorRef {
-    type In<'r> = &'r A;
-    type Type<'r> = &'r A;
+impl<A: Actor> Permission<A> for Meta {
+    type In<'r> = &'r mut A;
+    type Type<'r> = &'r mut A;
 
     fn reborrow(actor: &mut A) -> Self::In<'_> {
-        &*actor
+        actor
     }
 
     fn pre_hook(actor: &mut A) {
@@ -243,8 +243,7 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
 
 /// A cloneable, `Send + Sync` handle to a running actor.
 ///
-/// This is what
-/// the rest of the world holds and calls; it never sees the actor's
+/// This is what the rest of the world holds and calls; it never sees the actor's
 /// concrete state, only the commands it accepts. Each command type gets
 /// two entry points — one that replies (`call*`), one that doesn't
 /// (`notify` / `cast_mut`) — both funneling into the same `Envelope`
@@ -266,26 +265,6 @@ where
     }
 }
 
-// #[derive(Debug)]
-// pub struct CommandFuture<T> {
-//     rx: oneshot::Receiver<T>,
-// }
-
-// impl<T> Future for CommandFuture<T> {
-//     type Output = T;
-//     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<T> {
-//         Pin::new(&mut self.rx)
-//             .poll(cx)
-//             .map(|r| r.expect("project thread dropped"))
-//     }
-// }
-
-// impl<T> From<oneshot::Receiver<T>> for CommandFuture<T> {
-//     fn from(value: oneshot::Receiver<T>) -> Self {
-//         Self { rx: value }
-//     }
-// }
-
 impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
     where
@@ -300,7 +279,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a read-only `Command` and await its result.
     pub async fn call<C>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Ref, Actor = A>,
+        C: IntoEnvelope<Query, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
@@ -309,7 +288,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
 
     pub fn call_blocking<C>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Ref, Actor = A>,
+        C: IntoEnvelope<Query, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
@@ -321,7 +300,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// effect (logging, metrics) where the caller doesn't need the value.
     pub fn notify<C>(&self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<Ref, Actor = A>,
+        C: IntoEnvelope<Query, Actor = A>,
     {
         self.send_envelope(command, NoReply)
     }
@@ -342,14 +321,13 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     where
         C: IntoEnvelope<Mutate, Actor = A>,
     {
-        let envelope = command.into_envelope::<T, _>(NoReply);
-        T::send(&self.sender, envelope)
+        self.send_envelope(command, NoReply)
     }
 
     /// Run a `Meta` command and await its result.
     pub async fn meta_call<C>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<ActorRef, Actor = A>,
+        C: IntoEnvelope<Meta, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();

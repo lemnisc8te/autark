@@ -1,3 +1,14 @@
 [workspace]
 resolver = "3"
 members = ["autark", "libautark"]
+
+[profile.dev]
+split-debuginfo = "unpacked"
+panic = "abort"
+build-override.opt-level = 3
+
+[workspace.dependencies]
+anyhow = "1.0.103"
+thiserror = "2.0.18"
+serde = {version = "1.0.228", features = ["derive"]}
+tokio = { version = "1.53.1", features = ["rt", "sync"] }

@@ -1,5 +1,5 @@
-# synchrony
-Synchrony is a different kind of music creation tool.
+# Autark
+Autark is a different kind of music creation tool.
 
 ## Planned features:
 * Build tracks as a series of groups.

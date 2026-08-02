@@ -13,11 +13,11 @@ use crate::{
 pub struct TrackReader<K: Kind> {
     channels: u16,
     kind: PhantomData<K>,
-    pub id: <K::Track as Stored>::Id,
+    pub id: <K::Track as Stored>::ID,
 }
 
 impl<K: Kind> TrackReader<K> {
-    pub fn new(id: <K::Track as Stored>::Id, channels: u16) -> Self {
+    pub fn new(id: <K::Track as Stored>::ID, channels: u16) -> Self {
         Self {
             kind: PhantomData,
             id,

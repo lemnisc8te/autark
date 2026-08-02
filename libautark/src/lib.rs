@@ -1,7 +1,6 @@
 #[forbid(
     unused_unsafe,
     clippy::fallible_impl_from,
-    // clippy::used_underscore_binding,
     clippy::used_underscore_items,
     clippy::undocumented_unsafe_blocks
 )]
@@ -11,7 +10,6 @@
     clippy::pedantic,
     clippy::cargo,
     clippy::used_underscore_binding,
-    // clippy::nursery,
     clippy::perf,
     clippy::correctness,
     clippy::suspicious,
@@ -61,9 +59,9 @@ mod tests {
     use crate::{
         engine::{
             manager::{
-                asset::{GetAudioAsset, LoadAudioAsset},
+                asset::commands::{AudioAssetFromID, LoadAudioAsset},
                 audio::{Play, TransportCmd},
-                project::{
+                project::commands::{
                     AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId,
                     InputSocketOf, OutputSocketOf,
                 },
@@ -163,7 +161,7 @@ mod tests {
                 .await?;
 
             let song_len = {
-                let asset = engine.get(GetAudioAsset(song_asset)).await.unwrap();
+                let asset = engine.get(AudioAssetFromID(song_asset)).await.unwrap();
                 Ok::<u64, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
             engine
@@ -183,7 +181,7 @@ mod tests {
                 .await?;
 
             let clap_len = {
-                let asset = &engine.get(GetAudioAsset(clap_asset)).await.unwrap();
+                let asset = &engine.get(AudioAssetFromID(clap_asset)).await.unwrap();
                 Ok::<_, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
 
@@ -217,7 +215,7 @@ mod tests {
                 })
                 .await?;
 
-            engine.publish(Some(vec![clap_node])).await;
+            engine.publish(None).await;
 
             engine.move_playhead(engine::tick::Tick(0));
             engine.fire_mut(Play);

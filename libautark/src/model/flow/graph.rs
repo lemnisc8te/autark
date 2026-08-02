@@ -22,10 +22,6 @@ pub struct NodeGraph {
     pub output_sockets: SlotMap<OutputSocketID, SocketMeta>,
     pub node_input_sockets: SecondaryMap<NodeID, Vec<InputSocketID>>,
     pub node_output_sockets: SecondaryMap<NodeID, Vec<OutputSocketID>>,
-
-    // ordered inputs, outputs
-    // Map Incoming -> Outgoing sockets
-    // essentially, maps sockets to where they get their value from
     pub links: SecondaryMap<InputSocketID, OutputSocketID>,
 }
 

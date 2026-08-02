@@ -14,8 +14,8 @@ new_key_type! {
 
 pub trait Track<K: Kind> {
     fn name(&self) -> &str;
-    fn clips(&self) -> &BTreeMap<Tick, <K::Clip as Stored>::Id>;
-    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <K::Clip as Stored>::Id>;
+    fn clips(&self) -> &BTreeMap<Tick, <K::Clip as Stored>::ID>;
+    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <K::Clip as Stored>::ID>;
     fn linked_node_id(&self) -> Option<NodeID>;
     fn linked_node_id_mut(&mut self) -> &mut Option<NodeID>;
     fn new(name: impl Into<String>) -> Self;
@@ -30,14 +30,14 @@ pub struct AudioTrack {
 }
 
 impl Stored for AudioTrack {
-    type Id = AudioTrackID;
+    type ID = AudioTrackID;
     type Actor = ProjectActor;
 
-    fn access(loc: &ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+    fn access(loc: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
         &loc.tracks
     }
 
-    fn access_mut(loc: &mut ProjectData) -> &mut slotmap::SlotMap<Self::Id, Self> {
+    fn access_mut(loc: &mut ProjectData) -> &mut slotmap::SlotMap<Self::ID, Self> {
         &mut loc.tracks
     }
 }
@@ -47,11 +47,11 @@ impl Track<Audio> for AudioTrack {
         &self.name
     }
 
-    fn clips(&self) -> &BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::Id> {
+    fn clips(&self) -> &BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::ID> {
         &self.clips
     }
 
-    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::Id> {
+    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::ID> {
         &mut self.clips
     }
 

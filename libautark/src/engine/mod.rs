@@ -1,6 +1,5 @@
 //! The core audio engine. Used to manipulate `Project`s, hold the audio thread, and more.
 pub mod bbp;
-pub mod command;
 pub mod constants;
 pub mod engineconfig;
 pub mod errors;
@@ -12,21 +11,23 @@ pub mod transport;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::asset::AssetActor;
-use crate::engine::manager::audio::{AudioActor, UpdateCmd};
-use crate::engine::manager::project::{ProjectActor, Publish};
-use crate::engine::manager::{StdCarrier, StdHandle};
-use crate::model::flow::{ErasedNode, NodeID};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
         engineconfig::EngineConfig,
         manager::{
-            Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Ref, StdManager,
+            Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Query, StdCarrier,
+            StdHandle, StdManager,
+            asset::AssetActor,
+            audio::{AudioActor, UpdateCmd},
+            project::{ProjectActor, commands::meta::Publish},
         },
         tick::Tick,
     },
-    model::project::ProjectData,
+    model::{
+        flow::{ErasedNode, NodeID},
+        project::ProjectData,
+    },
 };
 
 use anyhow::Result;
@@ -143,7 +144,7 @@ impl HasHandle<AudioActor> for Engine {
 impl Engine {
     pub async fn get<C>(&self, command: C) -> C::Output
     where
-        C: Command<Ref> + IntoEnvelope<Ref>,
+        C: Command<Query> + IntoEnvelope<Query>,
         Self: HasHandle<C::Actor>,
     {
         HasHandle::<C::Actor>::handle(self).call(command).await
@@ -159,7 +160,7 @@ impl Engine {
 
     pub fn notify<C>(&self, command: C)
     where
-        C: Command<Ref> + IntoEnvelope<Ref>,
+        C: Command<Query> + IntoEnvelope<Query>,
         Self: HasHandle<C::Actor>,
     {
         let _ = HasHandle::<C::Actor>::handle(self).notify(command);
