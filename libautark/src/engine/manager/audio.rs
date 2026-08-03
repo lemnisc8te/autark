@@ -11,7 +11,7 @@ use crate::engine::{
     CompiledGraph,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     engineconfig::EngineConfig,
-    manager::{Actor, BoxedEnvelope, Carrier, Command, Handle, HasHandle, Modify, StdCarrier},
+    manager::{Actor, BoxedEnvelope, Command, Handle, HasHandle, Modify, StdCarrier},
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
@@ -211,27 +211,5 @@ impl Actor for AudioActor {
 
     fn data_mut(&mut self) -> &mut Self::Data {
         self
-    }
-}
-
-pub struct AudioManager {}
-
-pub struct AudioTaskCarrier {}
-
-impl Carrier<AudioActor> for AudioTaskCarrier {
-    type Sender = flume::Sender<BoxedEnvelope<AudioActor>>;
-    type Receiver = flume::Receiver<BoxedEnvelope<AudioActor>>;
-
-    fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        flume::bounded(capacity)
-    }
-
-    fn send(sender: &Self::Sender, envelope: BoxedEnvelope<AudioActor>) -> Result<()> {
-        let _ = sender.send(envelope);
-        Ok(())
-    }
-
-    fn recv(receiver: &Self::Receiver) -> Result<BoxedEnvelope<AudioActor>> {
-        Ok(receiver.recv()?)
     }
 }

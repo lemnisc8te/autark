@@ -222,6 +222,7 @@ where
 /// that can move a `Box<dyn Envelope<A>>` from many producers to one
 /// consumer qualifies: a priority queue, an unbounded channel, a
 /// metrics-wrapped channel, etc.
+#[async_trait]
 pub trait Carrier<A: Actor>: Send {
     type Sender: Send + Clone + 'static;
     type Receiver: Send + 'static;
@@ -232,13 +233,13 @@ pub trait Carrier<A: Actor>: Send {
     ///
     /// # Errors
     /// - Implementation specific
-    fn send(sender: &Self::Sender, envelope: A::Envelope) -> Result<()>;
+    async fn send(sender: &Self::Sender, envelope: A::Envelope) -> Result<()>;
 
     /// Awaits the next envelope, or `None` once the transport is closed.
     ///
     /// # Errors
     /// - Implementation Specific
-    fn recv(receiver: &Self::Receiver) -> Result<A::Envelope>;
+    async fn recv(receiver: &Self::Receiver) -> Result<A::Envelope>;
 }
 
 pub struct StdCarrier<A: Actor> {
@@ -254,13 +255,13 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
         flume::bounded(capacity)
     }
 
-    fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
-        let _ = sender.send(envelope);
+    async fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
+        sender.send_async(envelope).await.expect("Failed to send");
         Ok(())
     }
 
-    fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
-        Ok(receiver.recv()?)
+    async fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
+        Ok(receiver.recv_async().await?)
     }
 }
 
@@ -288,14 +289,14 @@ impl<A: Actor> Clone for Handle<A> {
 }
 
 impl<A: Actor> Handle<A> {
-    fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
+    async fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
     where
         P: Permission<A>,
         C: IntoEnvelope<P, Actor = A>,
         R: ReplyPort<C::Output> + 'static,
     {
         let envelope = command.into_envelope::<_>(reply);
-        A::Carrier::send(&self.sender, envelope) // no lock needed now
+        A::Carrier::send(&self.sender, envelope).await // no lock needed now
     }
 
     /// Run a read-only `Command` and await its result.
@@ -305,29 +306,19 @@ impl<A: Actor> Handle<A> {
         C: IntoEnvelope<RP, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).ok();
+        self.send_envelope(command, Reply(tx)).await.ok();
         rx.await.expect("actor dropped")
-    }
-
-    pub fn call_blocking<C, RP>(&self, command: C) -> C::Output
-    where
-        RP: RefPermission<A>,
-        C: IntoEnvelope<RP, Actor = A>,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).ok();
-        rx.blocking_recv().expect("actor thread dropped")
     }
 
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
-    pub fn notify<C, RP>(&self, command: C) -> Result<()>
+    pub async fn notify<C, RP>(&self, command: C) -> Result<()>
     where
         RP: RefPermission<A>,
         C: IntoEnvelope<RP, Actor = A>,
     {
-        self.send_envelope(command, NoReply)
+        self.send_envelope(command, NoReply).await
     }
 
     /// Run a `MutatingCommand` and await its result.
@@ -337,18 +328,18 @@ impl<A: Actor> Handle<A> {
         C: IntoEnvelope<MP, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).ok();
+        self.send_envelope(command, Reply(tx)).await.ok();
         rx.await.unwrap()
     }
 
     /// Enqueue a `MutatingCommand` without waiting for its result
     /// ("cast" in classic actor-model terms — fire and forget).
-    pub fn fire_mut<C, MP>(&self, command: C) -> Result<()>
+    pub async fn fire_mut<C, MP>(&self, command: C) -> Result<()>
     where
         MP: MutatePermission<A>,
         C: IntoEnvelope<MP, Actor = A>,
     {
-        self.send_envelope(command, NoReply)
+        self.send_envelope(command, NoReply).await
     }
 }
 
@@ -381,7 +372,7 @@ where
             // Sequential execution guarantee: exactly one envelope is
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
-            while let Ok(envelope) = A::Carrier::recv(&receiver) {
+            while let Ok(envelope) = A::Carrier::recv(&receiver).await {
                 Box::new(envelope).engage(&mut actor).await;
             }
 

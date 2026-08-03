@@ -90,12 +90,11 @@ mod tests {
             Engine::new(project).unwrap()
         };
         let master_node_id = engine.get(GetMasterNodeId).await;
-        dbg!("got: {master_node_id}");
         let master_in = engine.get(InputSocketOf(master_node_id, 0)).await;
 
         let song_asset = async {
             engine
-                .load(LoadAudioAsset(
+                .call_mut(LoadAudioAsset(
                     "./assets/AUDIO_4892.mp3".into(),
                     engine.sample_rate(),
                 ))
@@ -104,8 +103,8 @@ mod tests {
         }
         .shared();
 
-        dbg!("got asset id");
         let song_len = async {
+            dbg!("here in songlen");
             let asset = engine
                 .get(WaitForAudioAsset(song_asset.clone().await))
                 .await
@@ -181,8 +180,9 @@ mod tests {
             })
             .await?;
 
+        dbg!("Here");
         let clap_asset = engine
-            .load(LoadAudioAsset(
+            .call_mut(LoadAudioAsset(
                 "./assets/clap.mp3".into(),
                 engine.sample_rate(),
             ))

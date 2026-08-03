@@ -2,7 +2,10 @@ use crate::{
     engine::{
         manager::{
             Handle,
-            asset::{AssetActor, commands::SubscribeAudioAsset},
+            asset::{
+                AssetActor,
+                commands::{SubscribeAudioAsset, WaitForAudioAsset},
+            },
             project::ProjectActor,
         },
         tick::Tick,
@@ -71,32 +74,14 @@ pub struct ResolvedAudioClip {
 }
 
 impl ResolvedAudioClip {
-    pub fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
-        let mut rx = asset_h.call_blocking(SubscribeAudioAsset(clip.asset_id));
-
-        // Create the single-thread runtime once outside the loop
-        let rt = Builder::new_current_thread().build()?;
-
-        // Use block_on to wait until the watch channel reaches a final state
-        rt.block_on(async {
-            rx.wait_for(|data| match data {
-                AssetData::Ready(_) => true,
-                AssetData::Failed => true,
-                AssetData::Pending => false,
-            })
-            .await
-        })?;
-
+    pub async fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
+        let asset = asset_h.call(WaitForAudioAsset(clip.asset_id)).await?;
         // Extract the final value after the runtime finishes blocking
-        match *rx.borrow() {
-            AssetData::Ready(ref asset) => Ok(Self {
-                start: clip.start,
-                length: clip.length,
-                asset: asset.clone(), // Assumes your asset type implements Clone
-            }),
-            AssetData::Failed => anyhow::bail!("asset {:?} failed to load", clip.asset_id),
-            AssetData::Pending => unreachable!(),
-        }
+        Ok(Self {
+            start: clip.start,
+            length: clip.length,
+            asset: asset.clone(), // Assumes your asset type implements Clone
+        })
     }
 }
 

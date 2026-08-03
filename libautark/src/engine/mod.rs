@@ -100,11 +100,7 @@ impl Engine {
             })
             .await
             .unwrap();
-        self.audio_h.fire_mut(UpdateCmd(update)).unwrap();
-    }
-
-    pub async fn load(&self, asset: LoadAudioAsset) -> Result<AudioAssetID> {
-        self.asset_h.call_mut(asset).await
+        self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
     }
 
     #[must_use]
@@ -124,17 +120,20 @@ impl Engine {
 
 impl HasHandle<ProjectActor> for Engine {
     fn handle(&self) -> &Handle<ProjectActor> {
+        dbg!("Getting project_h");
         &self.project_h
     }
 }
 impl HasHandle<AssetActor> for Engine {
     fn handle(&self) -> &Handle<AssetActor> {
+        dbg!("Getting asset_h");
         &self.asset_h
     }
 }
 
 impl HasHandle<AudioActor> for Engine {
     fn handle(&self) -> &Handle<AudioActor> {
+        dbg!("Getting audio_h");
         &self.audio_h
     }
 }

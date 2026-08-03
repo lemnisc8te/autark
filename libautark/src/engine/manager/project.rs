@@ -3,6 +3,7 @@ use crate::{
     model::{Audio, arr::clip::ResolvedAudioClip, flow::nodes::trackreader::TrackReaderState},
 };
 use anyhow::Result;
+use futures::future::join_all;
 
 use crate::{
     engine::{
@@ -17,7 +18,10 @@ use crate::{
     },
 };
 
-use std::{any::Any, collections::HashSet, range::Range};
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashSet},
+};
 
 pub struct ProjectActor {
     pub(crate) current: ProjectData,
@@ -59,7 +63,7 @@ impl ProjectActor {
     }
 
     /// Builds the next `GraphUpdate`
-    pub fn publish_current(
+    pub async fn publish_current(
         &mut self,
         asset_h: &Handle<AssetActor>,
         filter: Option<&[NodeID]>,
@@ -79,10 +83,10 @@ impl ProjectActor {
         let old_ids: HashSet<NodeID> = self.known_node_ids.clone();
         let new_ids: HashSet<NodeID> = self.project().graph.nodes.keys().collect();
 
-        let state_additions: Vec<_> = new_ids
+        let state_additions = new_ids
             .difference(&old_ids)
-            .map(|&id| self.create_node_state(asset_h, id))
-            .collect();
+            .map(|&id| self.create_node_state(asset_h, id));
+        let state_additions = join_all(state_additions).await;
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
         let _ = std::mem::replace(&mut self.known_node_ids, new_ids);
@@ -93,7 +97,7 @@ impl ProjectActor {
         })
     }
 
-    fn create_node_state(
+    async fn create_node_state(
         &self,
         asset_h: &Handle<AssetActor>,
         node_id: NodeID,
@@ -101,18 +105,14 @@ impl ProjectActor {
         let node = self.project().graph.nodes[node_id].clone();
         if let Some(n) = node.as_any().downcast_ref::<TrackReader<Audio>>() {
             let track_id = n.id;
-            let the_clips: std::collections::BTreeMap<Tick, ResolvedAudioClip> = self
-                .project()
-                .tracks[track_id]
-                .clips
-                .iter()
-                .map(|(tick, clipid)| {
-                    let the_clip = self.project().clips[*clipid];
-                    let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone()).unwrap();
-                    (*tick, resolved)
-                })
-                .collect();
-
+            let mut the_clips: BTreeMap<Tick, ResolvedAudioClip> = BTreeMap::new();
+            for (tick, clipid) in &self.project().tracks[track_id].clips {
+                let the_clip = self.project().clips[*clipid];
+                let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone())
+                    .await
+                    .unwrap();
+                the_clips.insert(*tick, resolved);
+            }
             (
                 node_id,
                 Box::new(TrackReaderState { clips: the_clips }) as Box<dyn Any + Send>,
@@ -122,52 +122,56 @@ impl ProjectActor {
         }
     }
 
-    pub fn bounce_range(
-        &self,
-        asset_h: &Handle<AssetActor>,
-        target: NodeID,
-        range: Range<Tick>,
-        block_size: usize,
-    ) -> Result<Vec<f32>> {
-        use crate::engine::{
-            manager::audio::AudioActor,
-            state::{Garbage, NodeStatePool},
-            util::abp::AudioBufferPool,
-        };
-        let ancestors: Vec<NodeID> = self
-            .project()
-            .graph
-            .ancestors_of(target)
-            .into_iter()
-            .collect();
-        let schedule = self.project().compile_graph(Some(&ancestors), target)?;
+    // pub fn bounce_range(
+    //     &self,
+    //     asset_h: &Handle<AssetActor>,
+    //     target: NodeID,
+    //     range: Range<Tick>,
+    //     block_size: usize,
+    // ) -> Result<Vec<f32>> {
+    //     use crate::engine::{
+    //         manager::audio::AudioActor,
+    //         state::{Garbage, NodeStatePool},
+    //         util::abp::AudioBufferPool,
+    //     };
+    //     let ancestors: Vec<NodeID> = self
+    //         .project()
+    //         .graph
+    //         .ancestors_of(target)
+    //         .into_iter()
+    //         .collect();
+    //     let schedule = self.project().compile_graph(Some(&ancestors), target)?;
 
-        let mut pool = AudioBufferPool::new(schedule.buffer_count, block_size);
-        let mut state_pool = NodeStatePool::new();
-        let (mut garbage_tx, _rx) = rtrb::RingBuffer::<Garbage>::new(1); // discarded, offline
+    //     let mut pool = AudioBufferPool::new(schedule.buffer_count, block_size);
+    //     let mut state_pool = NodeStatePool::new();
+    //     let (mut garbage_tx, _rx) = rtrb::RingBuffer::<Garbage>::new(1); // discarded, offline
 
-        let mut update = GraphUpdate {
-            state_additions: ancestors
-                .iter()
-                .map(|&id| self.create_node_state(asset_h, id))
-                .collect(),
-            schedule,
-            state_removals: vec![],
-        };
-        state_pool.apply(&mut update, &mut garbage_tx);
+    //     let state_addititions = ancestors
+    //         .iter()
+    //         .map(|&id| self.create_node_state(asset_h, id))
+    //         .collect();
+    //     let mut update = GraphUpdate {
+    //         state_additions: ancestors
+    //             .iter()
+    //             .map(|&id| self.create_node_state(asset_h, id))
+    //             .collect(),
+    //         schedule,
+    //         state_removals: vec![],
+    //     };
+    //     state_pool.apply(&mut update, &mut garbage_tx);
 
-        let frames = usize::try_from((range.end - range.start).0)?;
-        let mut out = Vec::with_capacity(frames);
-        let mut cursor = range.start;
-        while (cursor - range.start).0 < frames as u64 {
-            let mixed =
-                AudioActor::execute_block(&update.schedule, cursor, &mut pool, &mut state_pool);
-            out.extend_from_slice(mixed);
-            cursor = cursor + Tick(block_size as u64);
-        }
-        out.truncate(frames);
-        Ok(out)
-    }
+    //     let frames = usize::try_from((range.end - range.start).0)?;
+    //     let mut out = Vec::with_capacity(frames);
+    //     let mut cursor = range.start;
+    //     while (cursor - range.start).0 < frames as u64 {
+    //         let mixed =
+    //             AudioActor::execute_block(&update.schedule, cursor, &mut pool, &mut state_pool);
+    //         out.extend_from_slice(mixed);
+    //         cursor = cursor + Tick(block_size as u64);
+    //     }
+    //     out.truncate(frames);
+    //     Ok(out)
+    // }
 }
 
 impl HasHandle<Self> for ProjectActor {

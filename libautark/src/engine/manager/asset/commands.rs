@@ -21,6 +21,7 @@ impl Command<Query> for SubscribeAudioAsset {
     type Actor = AssetActor;
 
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+        dbg!("subscribing");
         actor.audio.get(self.0).unwrap().watch.subscribe()
     }
 }
@@ -38,7 +39,7 @@ impl Command<MetaQuery> for WaitForAudioAsset {
         actor: <MetaQuery as Permission<Self::Actor>>::Type<'_>,
     ) -> Self::Output {
         let mut rx = actor.loopback.call(SubscribeAudioAsset(self.0)).await;
-
+        dbg!("waiting");
         rx.wait_for(|data| match data {
             AssetData::Ready(_) | AssetData::Failed => true,
             AssetData::Pending => false,
@@ -67,13 +68,19 @@ impl Command<MetaMutate> for LoadAudioAsset {
         actor: <MetaMutate as Permission<Self::Actor>>::Type<'_>,
     ) -> Self::Output {
         let new_key = actor.reg.audio.insert(AssetSlot::new(AssetData::Pending));
-
-        let task = async move || AssetRegistry::create_audio_asset(self);
-        let result = actor.reg.io_pool.execute(task);
-        let _ = actor.handle().fire_mut(CompleteAudioAssetLoad {
-            id: new_key,
-            result: result.await,
-        });
+        let handle = actor.handle().clone();
+        let key_clone = new_key;
+        let task = move || {
+            dbg!("in task");
+            let result = AssetRegistry::create_audio_asset(self);
+            handle.fire_mut(CompleteAudioAssetLoad {
+                id: key_clone,
+                result,
+            });
+            dbg!("Sent completion update");
+        };
+        actor.reg.io_pool.execute(task);
+        dbg!("Executed task");
         Ok(new_key)
     }
 }
@@ -89,11 +96,13 @@ impl Command<Modify> for CompleteAudioAssetLoad {
     type Actor = AssetActor;
 
     async fn execute(self, actor: <Modify as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        let v = actor.audio.get_mut(self.id).unwrap();
+        dbg!("Completing load");
+        let slot = actor.audio.get_mut(self.id).unwrap();
         let data_status = match self.result {
             Ok(asset) => AssetData::Ready(asset),
             Err(_) => AssetData::Failed,
         };
-        v.watch.send_modify(|f| *f = data_status);
+        slot.watch.send(data_status);
+        dbg!("Completed load");
     }
 }

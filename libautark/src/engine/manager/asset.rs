@@ -65,14 +65,14 @@ impl AssetSlot<Audio> for AudioAssetSlot {
 
 pub struct AssetRegistry {
     pub audio: SlotMap<AudioAssetID, AudioAssetSlot>,
-    pub io_pool: WorkerPool<Result<AudioAsset>>,
+    pub io_pool: WorkerPool,
 }
 
 impl AssetRegistry {
     fn new() -> Self {
         Self {
             audio: Default::default(),
-            io_pool: WorkerPool::new(4),
+            io_pool: WorkerPool::new(),
         }
     }
 
@@ -131,6 +131,7 @@ impl AssetRegistry {
                 Err(_) => break,
             }
         }
+        println!();
         let resampled =
             Self::resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
         let len = resampled.len();
