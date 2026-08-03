@@ -59,7 +59,7 @@ mod tests {
     use crate::{
         engine::{
             manager::{
-                asset::commands::{AudioAssetFromID, LoadAudioAsset},
+                asset::commands::{LoadAudioAsset, SubscribeAudioAsset},
                 audio::{Play, TransportCmd},
                 project::commands::{
                     AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId,
@@ -95,7 +95,7 @@ mod tests {
             let master_in = engine.get(InputSocketOf(master_node_id, 0)).await;
 
             let song_asset = engine
-                .call_mut(LoadAudioAsset(
+                .load(LoadAudioAsset(
                     "./assets/AUDIO_4892.mp3".into(),
                     engine.sample_rate(),
                 ))
@@ -161,7 +161,7 @@ mod tests {
                 .await?;
 
             let song_len = {
-                let asset = engine.get(AudioAssetFromID(song_asset)).await.unwrap();
+                let asset = engine.get(SubscribeAudioAsset(song_asset)).await.unwrap();
                 Ok::<u64, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
             engine
@@ -181,7 +181,12 @@ mod tests {
                 .await?;
 
             let clap_len = {
-                let asset = &engine.get(AudioAssetFromID(clap_asset)).await.unwrap();
+                let asset = &engine
+                    .get(SubscribeAudioAsset(clap_asset))
+                    .await
+                    .wait_for(|f| matches!(f, model::asset::AssetData::Ready(_)))
+                    .await
+                    .unwrap();
                 Ok::<_, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
             };
 

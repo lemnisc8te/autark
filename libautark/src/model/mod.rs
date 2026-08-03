@@ -58,8 +58,8 @@ pub trait Kind:
     + 'static
 {
     type Asset: Stored;
-    type Clip: Clip<Self> + Stored;
-    type Track: Track<Self> + Stored;
+    type Clip: Clip<Self> + Stored<Storage = Self::Clip>;
+    type Track: Track<Self> + Stored<Storage = Self::Track>;
 
     fn into_datakind() -> DataKind;
 }
@@ -94,7 +94,8 @@ pub trait Renderable: Send {
 pub trait Stored: Sized {
     type ID: Key + Serialize + DeserializeOwned + Send + 'static;
     type Actor: Actor;
+    type Storage;
 
-    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::ID, Self>;
-    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::ID, Self>;
+    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::ID, Self::Storage>;
+    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::ID, Self::Storage>;
 }

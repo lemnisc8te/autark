@@ -11,11 +11,12 @@ pub mod audio;
 pub mod project;
 
 #[async_trait]
-pub trait Actor: Send + Sized + 'static {
+pub trait Actor: HasHandle<Self> + Send + Sized + 'static {
     type InitParams;
     type Data;
     type Envelope: Envelope<Self>;
-    fn new(params: Self::InitParams) -> Self;
+    type Carrier: Carrier<Self>;
+    fn new(params: Self::InitParams, loopback: Handle<Self>) -> Self;
 
     /// Run once before the first command is processed.
     fn on_start(&mut self) {}
@@ -31,15 +32,15 @@ pub trait Actor: Send + Sized + 'static {
 }
 
 pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
-    fn into_envelope<T, R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
+    fn into_envelope<R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
     where
-        T: Carrier<Self::Actor>,
         R: ReplyPort<Self::Output> + 'static;
 }
 
 pub struct Query;
 pub struct Mutate;
 pub struct Meta;
+pub struct MetaMutate;
 
 pub trait Permission<A: Actor>: Send + 'static {
     type In<'r>;
@@ -85,7 +86,21 @@ impl<A: Actor> Permission<A> for Mutate {
         self_ref.data_mut()
     }
 }
+
 impl<A: Actor> Permission<A> for Meta {
+    type In<'r> = &'r A;
+    type Type<'r> = &'r A;
+
+    fn reborrow(actor: &mut A) -> Self::In<'_> {
+        actor
+    }
+
+    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
+        self_ref
+    }
+}
+
+impl<A: Actor> Permission<A> for MetaMutate {
     type In<'r> = &'r mut A;
     type Type<'r> = &'r mut A;
 
@@ -102,11 +117,12 @@ impl<A: Actor> Permission<A> for Meta {
     }
 }
 
+#[async_trait]
 pub trait Command<P: Permission<Self::Actor>>: Send + 'static {
     type Output: Send;
     type Actor: Actor;
 
-    fn execute(self, actor: <P as Permission<Self::Actor>>::Type<'_>) -> Self::Output;
+    async fn execute(self, actor: <P as Permission<Self::Actor>>::Type<'_>) -> Self::Output;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -136,16 +152,17 @@ impl<O: Send> ReplyPort<O> for NoReply {
     fn send(self, _output: O) {}
 }
 
-// #[async_trait]
+#[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    fn handle(self: Box<Self>, actor: &mut A);
+    async fn engage(self: Box<Self>, actor: &mut A);
 }
 
 pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
+#[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    fn handle(self: Box<Self>, actor: &mut A) {
-        (*self).handle(actor);
+    async fn engage(self: Box<Self>, actor: &mut A) {
+        (*self).engage(actor);
     }
 }
 
@@ -154,6 +171,7 @@ where
     P: Permission<C::Actor>,
     C: Command<P>,
     R: ReplyPort<C::Output>,
+    A: Actor,
 {
     command: C,
     reply: R,
@@ -166,9 +184,8 @@ where
     C: Command<P>,
     C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
 {
-    fn into_envelope<T, R>(self, reply: R) -> <C::Actor as Actor>::Envelope
+    fn into_envelope<R>(self, reply: R) -> <C::Actor as Actor>::Envelope
     where
-        T: Carrier<C::Actor>,
         R: ReplyPort<Self::Output> + 'static,
     {
         Box::new(StdEnvelope {
@@ -179,16 +196,17 @@ where
     }
 }
 
+#[async_trait]
 impl<A: Actor, P: Permission<A>, C, R> Envelope<A> for StdEnvelope<A, P, C, R>
 where
     C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    fn handle(self: Box<Self>, actor: &mut A) {
+    async fn engage(self: Box<Self>, actor: &mut A) {
         let Self { command, reply, .. } = *self;
         P::pre_hook(actor);
         let input = P::reborrow(actor);
-        let output = command.execute(P::data(input));
+        let output = command.execute(P::data(input)).await;
         // actor.post_mutate();
         reply.send(output);
     }
@@ -200,7 +218,7 @@ where
 /// consumer qualifies: a priority queue, an unbounded channel, a
 /// metrics-wrapped channel, etc.
 pub trait Carrier<A: Actor>: Send {
-    type Sender: Send + 'static;
+    type Sender: Send + Clone + 'static;
     type Receiver: Send + 'static;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver);
@@ -248,16 +266,15 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
 /// two entry points — one that replies (`call*`), one that doesn't
 /// (`notify` / `cast_mut`) — both funneling into the same `Envelope`
 /// generic over `ReplyPort`.
-pub struct Handle<A: Actor, T: Carrier<A>> {
-    sender: T::Sender,
+pub struct Handle<A: Actor> {
+    sender: <A::Carrier as Carrier<A>>::Sender,
 }
 
-pub type StdHandle<A> = Handle<A, StdCarrier<A>>;
+pub trait HasHandle<A: Actor> {
+    fn handle(&self) -> &Handle<A>;
+}
 
-impl<A: Actor, T: Carrier<A>> Clone for Handle<A, T>
-where
-    T::Sender: Clone,
-{
+impl<A: Actor> Clone for Handle<A> {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
@@ -265,15 +282,15 @@ where
     }
 }
 
-impl<A: Actor, T: Carrier<A>> Handle<A, T> {
+impl<A: Actor> Handle<A> {
     fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
     where
         P: Permission<A>,
         C: IntoEnvelope<P, Actor = A>,
         R: ReplyPort<C::Output> + 'static,
     {
-        let envelope = command.into_envelope::<T, _>(reply);
-        T::send(&self.sender, envelope) // no lock needed now
+        let envelope = command.into_envelope::<_>(reply);
+        A::Carrier::send(&self.sender, envelope) // no lock needed now
     }
 
     /// Run a read-only `Command` and await its result.
@@ -327,7 +344,7 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
     /// Run a `Meta` command and await its result.
     pub async fn meta_call<C>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Meta, Actor = A>,
+        C: IntoEnvelope<MetaMutate, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
@@ -340,14 +357,10 @@ impl<A: Actor, T: Carrier<A>> Handle<A, T> {
 /// restart-on-panic, metrics, tracing spans, backpressure policy, etc.,
 /// all while keeping the same `spawn` signature.
 pub trait Manager<A: Actor> {
-    type Carrier: Carrier<A>;
     /// Spawn `actor` onto its own tokio task. Returns a cloneable
     /// `Handle` for sending it commands, and a `JoinHandle` that
     /// resolves to the actor's final state once its mailbox closes.
-    fn spawn(
-        params: A::InitParams,
-        mailbox_capacity: usize,
-    ) -> (Handle<A, Self::Carrier>, JoinHandle<A>);
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A>, JoinHandle<A>);
 }
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
@@ -358,14 +371,11 @@ impl<A> Manager<A> for StdManager<A>
 where
     A: Actor,
 {
-    type Carrier = StdCarrier<A>;
-
-    fn spawn(
-        params: A::InitParams,
-        mailbox_capacity: usize,
-    ) -> (Handle<A, Self::Carrier>, JoinHandle<A>) {
-        let mut actor = A::new(params);
-        let (sender, receiver) = Self::Carrier::pair(mailbox_capacity);
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A>, JoinHandle<A>) {
+        let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
+        let handle = Handle { sender };
+        let loopback = handle.clone();
+        let mut actor = A::new(params, loopback);
 
         let joiner = thread::spawn(move || {
             actor.on_start();
@@ -373,15 +383,15 @@ where
             // Sequential execution guarantee: exactly one envelope is
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
-            while let Ok(envelope) = Self::Carrier::recv(&receiver) {
-                Box::new(envelope).handle(&mut actor);
+            while let Ok(envelope) = A::Carrier::recv(&receiver) {
+                Box::new(envelope).engage(&mut actor);
             }
 
             actor.on_stop();
             actor
         });
 
-        (Handle { sender }, joiner)
+        (handle, joiner)
     }
 }
 
@@ -390,7 +400,7 @@ where
 pub fn spawn_actor<A, M>(
     params: A::InitParams,
     mailbox_capacity: usize,
-) -> (Handle<A, M::Carrier>, JoinHandle<A>)
+) -> (Handle<A>, JoinHandle<A>)
 where
     A: Actor,
     M: Manager<A>,

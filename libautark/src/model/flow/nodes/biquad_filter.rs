@@ -126,7 +126,7 @@ impl Node for BiquadFilter {
 
     fn process(
         &self,
-        pool: &mut crate::engine::bbp::PoolExecutor,
+        pool: &mut crate::engine::util::abp::PoolExecutor,
         state: &mut Self::State,
         _: Tick,
         inputs: &[SlotIndex],

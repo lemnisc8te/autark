@@ -9,23 +9,28 @@ use cpal::traits::StreamTrait;
 
 use crate::engine::{
     CompiledGraph,
-    bbp::BlockBufferPool,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     engineconfig::EngineConfig,
-    manager::{Actor, BoxedEnvelope, Carrier, Command, Mutate},
+    manager::{Actor, BoxedEnvelope, Carrier, Command, Handle, HasHandle, Mutate, StdCarrier},
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
+    util::abp::AudioBufferPool,
 };
 
 pub struct AudioActor {
     update_tx: rtrb::Producer<GraphUpdate>,
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
+    loopback: Handle<Self>,
 }
 
 impl AudioActor {
-    pub fn init(config: &EngineConfig, playhead: Arc<AtomicU64>) -> Result<Self> {
+    pub fn init(
+        config: &EngineConfig,
+        playhead: Arc<AtomicU64>,
+        loopback: Handle<Self>,
+    ) -> Result<Self> {
         let transport = Arc::new(Transport::new());
         let init_update = GraphUpdate::default();
 
@@ -54,6 +59,7 @@ impl AudioActor {
             transport,
             update_tx,
             _stream: stream,
+            loopback,
         })
     }
 
@@ -70,7 +76,7 @@ impl AudioActor {
         use cpal::traits::DeviceTrait;
         let channels = config.config.channels;
         let device = config.device.clone();
-        let mut buffer_pool = BlockBufferPool::new(MAX_BUFFER_SLOTS, 1024);
+        let mut buffer_pool = AudioBufferPool::new(MAX_BUFFER_SLOTS, 1024);
 
         let mut state_pool = NodeStatePool::new();
         let mut current: Option<GraphUpdate> = None;
@@ -117,7 +123,7 @@ impl AudioActor {
     pub fn execute_block<'a>(
         schedule: &CompiledGraph,
         block_start: Tick,
-        pool: &'a mut BlockBufferPool,
+        pool: &'a mut AudioBufferPool,
         state_pool: &mut NodeStatePool,
     ) -> &'a [f32] {
         assert_no_alloc::assert_no_alloc(|| {
@@ -139,55 +145,64 @@ impl AudioActor {
                 );
             }
 
-            executor.get_input(schedule.master_output_slot)
+            executor.get_input(schedule.capture_slot)
         })
     }
 }
 
 pub struct TransportCmd(pub TransportState);
 
+#[async_trait]
 impl Command<Mutate> for TransportCmd {
     type Actor = AudioActor;
     type Output = ();
 
-    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
         actor.transport.transport(self.0);
     }
 }
 
 pub struct Play;
 
+#[async_trait]
 impl Command<Mutate> for Play {
     type Actor = AudioActor;
     type Output = ();
 
-    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
         actor.transport.play();
     }
 }
 
 pub struct UpdateCmd(pub GraphUpdate);
 
+#[async_trait]
 impl Command<Mutate> for UpdateCmd {
     type Output = ();
     type Actor = AudioActor;
 
-    fn execute(self, actor: &mut AudioActor) -> Self::Output {
+    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
         if actor.update_tx.push(self.0).is_err() {
             eprintln!("ring full, audio update dropped");
         }
     }
 }
 
-#[async_trait]
+impl HasHandle<Self> for AudioActor {
+    fn handle(&self) -> &Handle<Self> {
+        &self.loopback
+    }
+}
+
 impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
     /// The audio stream is inaccessible
     type Data = Self;
     type Envelope = BoxedEnvelope<Self>;
+    type Carrier = StdCarrier<Self>;
 
-    fn new((config, playhead): Self::InitParams) -> Self {
-        Self::init(&config, playhead).unwrap()
+    fn new((config, playhead): Self::InitParams, loopback: Handle<Self>) -> Self {
+        Self::init(&config, playhead, loopback).unwrap()
     }
 
     fn data(&self) -> &Self::Data {

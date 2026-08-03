@@ -142,7 +142,11 @@ impl ProjectData {
             .ok_or(EngineError::SocketNotFound(endpoint).into())
     }
 
-    pub fn compile_graph(&self, filter: Option<&[NodeID]>) -> Result<CompiledGraph> {
+    pub fn compile_graph(
+        &self,
+        filter: Option<&[NodeID]>,
+        capture_id: NodeID,
+    ) -> Result<CompiledGraph> {
         let order = self.graph.topo_sort(filter)?;
 
         let mut socket_slot: HashMap<OutputSocketID, SlotIndex> = HashMap::new();
@@ -190,7 +194,7 @@ impl ProjectData {
         let master_output_slot = self
             .graph
             .node_output_sockets
-            .get(self.master_node_id)
+            .get(capture_id)
             .and_then(|outs| outs.first())
             .and_then(|&id| socket_slot.get(&id))
             .copied()
@@ -199,7 +203,7 @@ impl ProjectData {
         Ok(CompiledGraph {
             steps,
             buffer_count,
-            master_output_slot,
+            capture_slot: master_output_slot,
         })
     }
 }

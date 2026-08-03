@@ -1,5 +1,4 @@
 //! The core audio engine. Used to manipulate `Project`s, hold the audio thread, and more.
-pub mod bbp;
 pub mod constants;
 pub mod engineconfig;
 pub mod errors;
@@ -7,17 +6,21 @@ pub mod manager;
 pub mod state;
 pub mod tick;
 pub mod transport;
+pub mod util;
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
+use crate::engine::manager::HasHandle;
+use crate::engine::manager::asset::commands::LoadAudioAsset;
+use crate::model::asset::AudioAssetID;
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
         engineconfig::EngineConfig,
         manager::{
             Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Query, StdCarrier,
-            StdHandle, StdManager,
+            StdManager,
             asset::AssetActor,
             audio::{AudioActor, UpdateCmd},
             project::{ProjectActor, commands::meta::Publish},
@@ -45,15 +48,15 @@ pub struct ScheduleStep {
 pub struct CompiledGraph {
     pub steps: Vec<ScheduleStep>,
     pub buffer_count: usize,
-    pub master_output_slot: SlotIndex,
+    pub capture_slot: SlotIndex,
 }
 
 pub struct Engine {
     pub playhead: Arc<AtomicU64>,
     config: EngineConfig,
-    asset_h: StdHandle<AssetActor>,
-    project_h: StdHandle<ProjectActor>,
-    audio_h: StdHandle<AudioActor>,
+    asset_h: Handle<AssetActor>,
+    project_h: Handle<ProjectActor>,
+    audio_h: Handle<AudioActor>,
 }
 
 impl Engine {
@@ -102,6 +105,10 @@ impl Engine {
         self.audio_h.fire_mut(UpdateCmd(update)).unwrap();
     }
 
+    pub async fn load(&self, asset: LoadAudioAsset) -> Result<AudioAssetID> {
+        self.asset_h.meta_call(asset).await
+    }
+
     #[must_use]
     pub const fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
@@ -117,26 +124,19 @@ impl Engine {
     }
 }
 
-pub trait HasHandle<A: Actor> {
-    type Carrier: Carrier<A>;
-    fn handle(&self) -> &Handle<A, Self::Carrier>;
-}
-
 impl HasHandle<ProjectActor> for Engine {
-    type Carrier = StdCarrier<ProjectActor>;
-    fn handle(&self) -> &StdHandle<ProjectActor> {
+    fn handle(&self) -> &Handle<ProjectActor> {
         &self.project_h
     }
 }
 impl HasHandle<AssetActor> for Engine {
-    type Carrier = StdCarrier<AssetActor>;
-    fn handle(&self) -> &StdHandle<AssetActor> {
+    fn handle(&self) -> &Handle<AssetActor> {
         &self.asset_h
     }
 }
+
 impl HasHandle<AudioActor> for Engine {
-    type Carrier = StdCarrier<AudioActor>;
-    fn handle(&self) -> &StdHandle<AudioActor> {
+    fn handle(&self) -> &Handle<AudioActor> {
         &self.audio_h
     }
 }

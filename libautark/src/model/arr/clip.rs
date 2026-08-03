@@ -1,21 +1,22 @@
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use slotmap::new_key_type;
-
 use crate::{
     engine::{
         manager::{
-            StdHandle,
-            asset::{AssetActor, commands::AudioAssetFromID},
+            Handle,
+            asset::{AssetActor, commands::SubscribeAudioAsset},
             project::ProjectActor,
         },
         tick::Tick,
     },
     model::{
         Audio, Kind, RenderBlock, Renderable, Stored,
-        asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
+        asset::{AssetData, AudioAsset, AudioAssetID, AudioAssetPayload},
         project::ProjectData,
     },
 };
+use anyhow::Result;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use slotmap::new_key_type;
+use tokio::runtime::Builder;
 
 new_key_type! {
     pub struct AudioClipID;
@@ -37,6 +38,7 @@ pub struct AudioClip {
 impl Stored for AudioClip {
     type ID = AudioClipID;
     type Actor = ProjectActor;
+    type Storage = Self;
 
     fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
         &project.clips
@@ -69,15 +71,31 @@ pub struct ResolvedAudioClip {
 }
 
 impl ResolvedAudioClip {
-    pub fn from_clip(clip: AudioClip, asset_h: StdHandle<AssetActor>) -> Self {
-        // Block the main thread until the future completes
-        let asset = asset_h
-            .call_blocking(AudioAssetFromID(clip.asset_id))
-            .unwrap();
-        ResolvedAudioClip {
-            start: clip.start,
-            length: clip.length,
-            asset,
+    pub fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
+        let mut rx = asset_h.call_blocking(SubscribeAudioAsset(clip.asset_id));
+
+        // Create the single-thread runtime once outside the loop
+        let rt = Builder::new_current_thread().build()?;
+
+        // Use block_on to wait until the watch channel reaches a final state
+        rt.block_on(async {
+            rx.wait_for(|data| match data {
+                AssetData::Ready(_) => true,
+                AssetData::Failed => true,
+                AssetData::Pending => false,
+            })
+            .await
+        })?;
+
+        // Extract the final value after the runtime finishes blocking
+        match *rx.borrow() {
+            AssetData::Ready(ref asset) => Ok(Self {
+                start: clip.start,
+                length: clip.length,
+                asset: asset.clone(), // Assumes your asset type implements Clone
+            }),
+            AssetData::Failed => anyhow::bail!("asset {:?} failed to load", clip.asset_id),
+            AssetData::Pending => unreachable!(),
         }
     }
 }
@@ -98,7 +116,6 @@ impl Renderable for ResolvedAudioClip {
         let block_end = *block_start + block_len;
 
         match &self.asset.payload {
-            AudioAssetPayload::Empty => todo!(),
             AudioAssetPayload::Resident(samples) => {
                 let clip_end = self.start + self.length;
                 let overlap_start = (*block_start).max(self.start);

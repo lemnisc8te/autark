@@ -1,13 +1,13 @@
 //! Home of the `BlockBufferPool`, a pool of memory created for the exclusive usage of the audio thread.
 use crate::engine::SlotIndex;
 
-pub struct BlockBufferPool {
+pub struct AudioBufferPool {
     /// Contiguous pre-allocated block: (`buffer_count` * `block_size`)
     memory: Vec<f32>,
     pub block_size: usize,
 }
 
-impl BlockBufferPool {
+impl AudioBufferPool {
     #[must_use]
     pub fn new(buffer_count: usize, block_size: usize) -> Self {
         Self {

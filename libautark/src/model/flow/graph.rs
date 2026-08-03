@@ -130,29 +130,50 @@ impl NodeGraph {
         Ok(prev_link)
     }
 
+    /// All nodes that (transitively) feed `target`'s inputs, plus `target` itself.
+    pub fn ancestors_of(&self, target: NodeID) -> HashSet<NodeID> {
+        let mut seen = HashSet::new();
+        let mut stack = VecDeque::from([target]);
+        while let Some(n) = stack.pop_front() {
+            if seen.insert(n) {
+                for &in_sock in self.inputs_of(n) {
+                    if let Some(&src_sock) = self.links.get(in_sock) {
+                        stack.push_back(self.output_sockets[src_sock].owner);
+                    }
+                }
+            }
+        }
+        seen
+    }
+
+    /// All nodes that (transitively) feed `target`'s inputs, plus `target` itself.
+    pub fn successors_of(&self, targets: &[NodeID]) -> HashSet<NodeID> {
+        let mut seen = HashSet::new();
+        let mut stack = VecDeque::from(targets.to_vec());
+        while let Some(n) = stack.pop_front() {
+            if seen.insert(n) {
+                let outputs = self.outputs_of(n);
+                let links = self
+                    .links
+                    .iter()
+                    .filter_map(|(i, o)| outputs.contains(o).then_some(i));
+                let succs = links.map(|i| self.input_sockets.get(i).unwrap().owner);
+                stack.extend(succs);
+            }
+        }
+        seen
+    }
+
     /// Find the topological ordering of the nodes within the graph.
     /// This is used during schedule compilation
     /// `filter` determines the "branch" nodes that we want to focus on. This is used for soloing/muting
     pub fn topo_sort(&self, filter: Option<&[NodeID]>) -> Result<Vec<NodeID>> {
         // 1. Identify all reachable nodes if a filter is provided
-        let mut nodes_to_sort: HashSet<NodeID> = HashSet::new();
-        if let Some(seeds) = filter {
-            let mut stack = VecDeque::from_iter(seeds.iter().cloned());
-            while let Some(n) = stack.pop_front() {
-                if nodes_to_sort.insert(n) {
-                    // Add all nodes that 'n' points to
-                    let outputs = self.outputs_of(n);
-                    let links = self
-                        .links
-                        .iter()
-                        .filter_map(|(i, o)| outputs.contains(o).then_some(i));
-                    let succs = links.map(|i| self.input_sockets.get(i).unwrap().owner);
-                    stack.extend(succs);
-                }
-            }
+        let nodes_to_sort: HashSet<NodeID> = if let Some(seeds) = filter {
+            self.successors_of(seeds)
         } else {
-            nodes_to_sort = self.nodes.keys().collect();
-        }
+            self.nodes.keys().collect()
+        };
 
         // 2. Build the subgraph structures
         let mut in_degree: HashMap<NodeID, usize> =

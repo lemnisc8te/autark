@@ -4,12 +4,20 @@
 use anyhow::Result;
 use slotmap::SlotMap;
 use std::fs::File;
-use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::watch;
 
 use crate::{
-    engine::manager::{Actor, BoxedEnvelope, Mutate},
-    model::asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
+    engine::{
+        manager::{
+            Actor, BoxedEnvelope, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset,
+        },
+        util::workerpool::WorkerPool,
+    },
+    model::{
+        Audio, Kind,
+        asset::{AssetData, AudioAsset, AudioAssetID, AudioAssetPayload},
+    },
 };
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -29,40 +37,56 @@ use symphonia::core::{
 
 pub mod commands;
 
-#[derive(Debug, Default)]
+pub trait AssetSlot<K: Kind>: Sized
+where
+    K::Asset: Clone,
+{
+    fn new(data: AssetData<K::Asset>) -> Self;
+    fn get_watch(&self) -> watch::Sender<AssetData<K::Asset>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct AudioAssetSlot {
+    // pub data: AssetData<K::Asset>,
+    pub watch: watch::Sender<AssetData<AudioAsset>>,
+}
+
+impl AssetSlot<Audio> for AudioAssetSlot {
+    fn new(data: AssetData<AudioAsset>) -> Self {
+        Self {
+            watch: watch::Sender::new(data),
+        }
+    }
+
+    fn get_watch(&self) -> watch::Sender<AssetData<<Audio as Kind>::Asset>> {
+        self.watch.clone()
+    }
+}
+
 pub struct AssetRegistry {
-    pub audio: SlotMap<AudioAssetID, AudioAsset>,
+    pub audio: SlotMap<AudioAssetID, AudioAssetSlot>,
+    pub io_pool: WorkerPool<Result<AudioAsset>>,
 }
 
 impl AssetRegistry {
-    pub fn load_audio_asset(
-        &mut self,
-        path: impl Into<PathBuf>,
-        target_sample_rate: u32,
-    ) -> Result<AudioAssetID> {
-        let path = path.into();
-        // Create a media source. Note that the MediaSource trait is automatically implemented for File,
-        // among other types.
+    fn new() -> Self {
+        Self {
+            audio: Default::default(),
+            io_pool: WorkerPool::new(4),
+        }
+    }
+
+    fn create_audio_asset(
+        LoadAudioAsset(path, target_sample_rate): LoadAudioAsset,
+    ) -> Result<AudioAsset, anyhow::Error> {
         let file = Box::new(File::open(&path)?);
-
-        // Create the media source stream using the boxed media source from above.
         let mss = MediaSourceStream::new(file, Default::default());
-
-        // Create a hint to help the format registry guess what format reader is appropriate. In this
-        // example we'll leave it empty.
         let hint = Hint::new();
-
-        // Use the default options when reading and decoding.
         let fmt_opts: FormatOptions = Default::default();
         let meta_opts: MetadataOptions = Default::default();
         let dec_opts: AudioDecoderOptions = Default::default();
-
-        // Probe the media source stream for a format.
         let mut format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
-
-        // Get the default audio track.
         let track = format.default_track(TrackType::Audio).unwrap();
-
         let source_sample_rate = track
             .codec_params
             .as_ref()
@@ -70,14 +94,11 @@ impl AssetRegistry {
             .audio()
             .unwrap()
             .sample_rate
-            .unwrap_or(target_sample_rate); // no rate in the stream -> assume it matches; can't do better
-        // Create a decoder for the track.
+            .unwrap_or(target_sample_rate);
         let mut decoder = symphonia::default::get_codecs().make_audio_decoder(
             track.codec_params.as_ref().unwrap().audio().unwrap(),
             &dec_opts,
         )?;
-
-        // Store the track identifier, we'll use it to filter packets.
         let track_id = track.id;
         let channels = decoder
             .codec_params()
@@ -85,10 +106,8 @@ impl AssetRegistry {
             .as_ref()
             .map_or_else(|| 1u16, |channels| channels.count() as u16);
         let mut scratch: Vec<f32> = vec![];
-        let mut samples: Vec<f32> = vec![]; // Vec::with_capacity(channels as usize * expected_sample_rate as usize * 2);
+        let mut samples: Vec<f32> = vec![];
         let mut total_sample_count = 0;
-
-        // Read and decode all packets from the format reader.
         while let Some(packet) = format.next_packet()? {
             // If the packet does not belong to the selected track, skip it.
             if packet.track_id != track_id {
@@ -123,10 +142,7 @@ impl AssetRegistry {
             path,
             len,
         };
-
-        let new_key = self.audio.insert(audio_asset);
-
-        Ok(new_key)
+        Ok(audio_asset)
     }
 
     /// Sinc-interpolated resample of interleaved f32 samples, with proper
@@ -181,9 +197,16 @@ impl AssetRegistry {
         outdata
     }
 }
-#[derive(Debug, Default)]
+
 pub struct AssetActor {
     reg: AssetRegistry,
+    loopback: Handle<Self>,
+}
+
+impl HasHandle<AssetActor> for AssetActor {
+    fn handle(&self) -> &Handle<AssetActor> {
+        &self.loopback
+    }
 }
 
 impl Actor for AssetActor {
@@ -193,9 +216,16 @@ impl Actor for AssetActor {
 
     type Envelope = BoxedEnvelope<Self>;
 
-    fn new((): Self::InitParams) -> Self {
-        Self::default()
+    type Carrier = StdCarrier<Self>;
+
+    fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
+        Self {
+            reg: AssetRegistry::new(),
+            loopback,
+        }
     }
+
+    fn on_start(&mut self) {}
 
     fn data(&self) -> &Self::Data {
         &self.reg

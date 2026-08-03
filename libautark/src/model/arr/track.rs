@@ -12,6 +12,13 @@ new_key_type! {
    pub struct AudioTrackID;
 }
 
+pub struct Subregion<K: Kind> {
+    pub start: Tick,
+    pub len: Tick,
+    pub variations: Vec<BTreeMap<Tick, <K::Clip as Stored>::ID>>,
+    pub current: usize,
+}
+
 pub trait Track<K: Kind> {
     fn name(&self) -> &str;
     fn clips(&self) -> &BTreeMap<Tick, <K::Clip as Stored>::ID>;
@@ -32,6 +39,7 @@ pub struct AudioTrack {
 impl Stored for AudioTrack {
     type ID = AudioTrackID;
     type Actor = ProjectActor;
+    type Storage = Self;
 
     fn access(loc: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
         &loc.tracks
@@ -72,39 +80,3 @@ impl Track<Audio> for AudioTrack {
         }
     }
 }
-
-// impl Renderable for AudioTrack {
-//     fn render(
-//         &self,
-//         RenderBlock {
-//             buf,
-//             block_start,
-//             channels,
-//         }: &mut RenderBlock<'_>,
-//     ) {
-//         // Deinterleave
-//         let block_len: Tick = (buf.len() / *channels as usize).into();
-//         let block_end = block_start + block_len;
-
-//         let lookback = self
-//             .clips
-//             .range(..*block_start)
-//             .next_back()
-//             .map(|(_, id)| *id)
-//             .filter(|id| {
-//                 proj.clips
-//                     .get(*id)
-//                     .is_some_and(|c| c.start + c.length > block_start)
-//             });
-//         let active = lookback
-//             .into_iter()
-//             .chain(self.clips.range(block_start..block_end).map(|(_, id)| *id));
-
-//         for clip_id in active {
-//             let Some(clip) = proj.clips.get(clip_id) else {
-//                 panic!("Invalid clip");
-//             };
-//             clip.render(proj, buf, block_start, channels);
-//         }
-//     }
-// }
