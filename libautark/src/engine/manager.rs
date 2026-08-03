@@ -7,6 +7,13 @@ pub mod asset;
 pub mod audio;
 pub mod project;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PriorityLevel {
+    Low = 0,      // Regular system traffic
+    Standard = 1, // Normal WaitForAudioAsset commands
+    High = 2,     // IO Completion notifications & Lifecycle events
+}
+
 #[async_trait]
 pub trait Actor: HasHandle<Self> + Send + Sized + 'static {
     type InitParams;
@@ -124,11 +131,27 @@ impl<A: Actor> Permission<A> for MetaMutate {
 }
 
 #[async_trait]
+pub trait Request<P: Permission<Self::Actor>>: Send + 'static {
+    type Output: Send;
+    type Actor: Actor;
+
+    async fn execute(self, actor: Handle<Self::Actor>) -> Self::Output;
+
+    fn priority() -> PriorityLevel {
+        PriorityLevel::Standard
+    }
+}
+
+#[async_trait]
 pub trait Command<P: Permission<Self::Actor>>: Send + 'static {
     type Output: Send;
     type Actor: Actor;
 
     async fn execute(self, actor: <P as Permission<Self::Actor>>::Type<'_>) -> Self::Output;
+
+    fn priority() -> PriorityLevel {
+        PriorityLevel::Standard
+    }
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -160,15 +183,20 @@ impl<O: Send> ReplyPort<O> for NoReply {
 
 #[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    async fn engage(self: Box<Self>, actor: &mut A);
+    async fn engage(self: Box<Self>, handle: Handle<A>);
+    fn priority(&self) -> PriorityLevel;
 }
 
 pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
 #[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn engage(self: Box<Self>, actor: &mut A) {
-        (*self).engage(actor).await;
+    async fn engage(self: Box<Self>, handle: Handle<A>) {
+        (*self).engage(handle).await;
+    }
+
+    fn priority(&self) -> PriorityLevel {
+        (**self).priority()
     }
 }
 
@@ -208,12 +236,15 @@ where
     C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    async fn engage(self: Box<Self>, actor: &mut A) {
+    async fn engage(self: Box<Self>, handle: Handle<A>) {
         let Self { command, reply, .. } = *self;
-        P::pre_hook(actor);
-        let input = P::reborrow(actor);
+        P::pre_hook(handle);
+        let input = P::reborrow(handle);
         let output = command.execute(P::data(input)).await;
         reply.send(output);
+    }
+    fn priority(&self) -> PriorityLevel {
+        C::priority()
     }
 }
 
@@ -248,20 +279,26 @@ pub struct StdCarrier<A: Actor> {
 
 #[async_trait]
 impl<A: Actor> Carrier<A> for StdCarrier<A> {
-    type Sender = flume::Sender<<A as Actor>::Envelope>;
-    type Receiver = flume::Receiver<<A as Actor>::Envelope>;
+    // type Sender = flume::Sender<<A as Actor>::Envelope>;
+    // type Receiver = flume::Receiver<<A as Actor>::Envelope>;
+    type Sender = async_priority_channel::Sender<<A as Actor>::Envelope, PriorityLevel>;
+    type Receiver = async_priority_channel::Receiver<<A as Actor>::Envelope, PriorityLevel>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        flume::bounded(capacity)
+        async_priority_channel::bounded(capacity as u64)
     }
 
     async fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
-        sender.send_async(envelope).await.expect("Failed to send");
+        let priority = envelope.priority();
+        sender
+            .send(envelope, priority)
+            .await
+            .expect("Failed to send");
         Ok(())
     }
 
     async fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
-        Ok(receiver.recv_async().await?)
+        Ok(receiver.recv().await?.0)
     }
 }
 
@@ -296,7 +333,7 @@ impl<A: Actor> Handle<A> {
         R: ReplyPort<C::Output> + 'static,
     {
         let envelope = command.into_envelope::<_>(reply);
-        A::Carrier::send(&self.sender, envelope).await // no lock needed now
+        A::Carrier::send(&self.sender, envelope).await
     }
 
     /// Run a read-only `Command` and await its result.
@@ -366,14 +403,12 @@ where
         let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
         let handle = Handle { sender };
         let loopback = handle.clone();
-        let mut actor = A::new(params, loopback);
+        let mut actor = A::new(params, loopback.clone());
 
         let joiner = tokio::spawn(async move {
-            // Sequential execution guarantee: exactly one envelope is
-            // ever "in flight" because `handle(...)` is fully awaited
-            // before the loop asks the transport for the next one.
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                Box::new(envelope).engage(&mut actor).await;
+                let loopback = loopback.clone();
+                tokio::spawn(async move { Box::new(envelope).engage(loopback.clone()).await });
             }
 
             actor.on_stop();

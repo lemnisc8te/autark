@@ -6,7 +6,7 @@ use tokio::sync::watch;
 
 use crate::{
     engine::manager::{
-        Command, HasHandle, MetaMutate, MetaQuery, Modify, Permission, Query,
+        Command, HasHandle, MetaMutate, MetaQuery, Modify, Permission, PriorityLevel, Query,
         asset::{AssetRegistry, AssetSlot},
     },
     model::asset::{AssetData, AudioAsset, AudioAssetID},
@@ -38,13 +38,14 @@ impl Command<MetaQuery> for WaitForAudioAsset {
         self,
         actor: <MetaQuery as Permission<Self::Actor>>::Type<'_>,
     ) -> Self::Output {
-        let mut rx = actor.loopback.call(SubscribeAudioAsset(self.0)).await;
+        let mut rx = actor.reg.audio.get(self.0).unwrap().watch.subscribe();
         dbg!("waiting");
         rx.wait_for(|data| match data {
             AssetData::Ready(_) | AssetData::Failed => true,
             AssetData::Pending => false,
         })
         .await?;
+        dbg!("updated");
 
         // Extract the final value after the runtime finishes blocking
         match *rx.borrow() {
@@ -104,5 +105,9 @@ impl Command<Modify> for CompleteAudioAssetLoad {
         };
         slot.watch.send(data_status);
         dbg!("Completed load");
+    }
+
+    fn priority() -> PriorityLevel {
+        PriorityLevel::High
     }
 }

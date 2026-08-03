@@ -11,9 +11,7 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::asset::commands::LoadAudioAsset;
 use crate::engine::manager::{HasHandle, MutatePermission, RefPermission};
-use crate::model::asset::AudioAssetID;
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
@@ -163,7 +161,7 @@ impl Engine {
         C: Command<RP> + IntoEnvelope<RP>,
         Self: HasHandle<C::Actor>,
     {
-        let _ = HasHandle::<C::Actor>::handle(self).notify(command);
+        drop(HasHandle::<C::Actor>::handle(self).notify(command));
     }
 
     pub fn fire_mut<C, MP>(&self, command: C)
@@ -172,6 +170,6 @@ impl Engine {
         C: Command<MP> + IntoEnvelope<MP>,
         Self: HasHandle<C::Actor>,
     {
-        let _ = HasHandle::<C::Actor>::handle(self).fire_mut(command);
+        drop(HasHandle::<C::Actor>::handle(self).fire_mut(command));
     }
 }

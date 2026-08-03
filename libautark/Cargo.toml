@@ -7,8 +7,10 @@ edition = "2024"
 anyhow = {workspace = true}
 arc-swap = "1.9.2"
 assert_no_alloc = "1.1.2"
+async-priority-channel = "0.2.0"
 async-trait = "0.1.91"
 audioadapter-buffers = "4.0.0"
+console-subscriber = {workspace = true}
 cpal = "0.18.1"
 dyn-clone = "1.0.20"
 flume = "0.12.0"
