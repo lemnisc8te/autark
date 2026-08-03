@@ -6,7 +6,7 @@ use tokio::sync::watch;
 
 use crate::{
     engine::manager::{
-        Command, HasHandle, Meta, MetaMutate, Mutate, Permission, Query,
+        Command, HasHandle, MetaMutate, MetaQuery, Modify, Permission, Query,
         asset::{AssetRegistry, AssetSlot},
     },
     model::asset::{AssetData, AudioAsset, AudioAssetID},
@@ -28,20 +28,22 @@ impl Command<Query> for SubscribeAudioAsset {
 pub struct WaitForAudioAsset(pub AudioAssetID);
 
 #[async_trait]
-impl Command<Meta> for WaitForAudioAsset {
+impl Command<MetaQuery> for WaitForAudioAsset {
     type Output = Result<AudioAsset>;
 
     type Actor = AssetActor;
 
-    async fn execute(self, actor: <Meta as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+    async fn execute(
+        self,
+        actor: <MetaQuery as Permission<Self::Actor>>::Type<'_>,
+    ) -> Self::Output {
         let mut rx = actor.loopback.call(SubscribeAudioAsset(self.0)).await;
 
         rx.wait_for(|data| match data {
-            AssetData::Ready(_) => true,
-            AssetData::Failed => true,
+            AssetData::Ready(_) | AssetData::Failed => true,
             AssetData::Pending => false,
         })
-        .await;
+        .await?;
 
         // Extract the final value after the runtime finishes blocking
         match *rx.borrow() {
@@ -81,12 +83,12 @@ pub struct CompleteAudioAssetLoad {
     result: Result<AudioAsset>,
 }
 #[async_trait]
-impl Command<Mutate> for CompleteAudioAssetLoad {
+impl Command<Modify> for CompleteAudioAssetLoad {
     type Output = ();
 
     type Actor = AssetActor;
 
-    async fn execute(self, actor: <Mutate as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+    async fn execute(self, actor: <Modify as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
         let v = actor.audio.get_mut(self.id).unwrap();
         let data_status = match self.result {
             Ok(asset) => AssetData::Ready(asset),

@@ -16,7 +16,7 @@ impl<O: Send + 'static> WorkerPool<O> {
 
         for _ in 0..num_workers {
             let rx = Arc::clone(&rx);
-            tokio::spawn(async move {
+            tokio::task::spawn_blocking(async move || {
                 while let Ok(job) = {
                     let mut lock = rx.lock().await;
                     lock.recv().await.ok_or(())

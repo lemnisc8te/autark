@@ -1,10 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::{
-    marker::PhantomData,
-    thread::{self, JoinHandle},
-};
-use tokio::sync::oneshot;
+use std::marker::PhantomData;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 pub mod asset;
 pub mod audio;
@@ -38,9 +35,18 @@ pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
 }
 
 pub struct Query;
-pub struct Mutate;
-pub struct Meta;
+pub struct Modify;
+pub struct MetaQuery;
 pub struct MetaMutate;
+
+pub trait MutatePermission<A: Actor>: Permission<A> {}
+pub trait RefPermission<A: Actor>: Permission<A> {}
+
+impl<A: Actor> RefPermission<A> for Query {}
+impl<A: Actor> RefPermission<A> for MetaQuery {}
+
+impl<A: Actor> MutatePermission<A> for Modify {}
+impl<A: Actor> MutatePermission<A> for MetaMutate {}
 
 pub trait Permission<A: Actor>: Send + 'static {
     type In<'r>;
@@ -70,7 +76,7 @@ impl<A: Actor> Permission<A> for Query {
         self_ref.data()
     }
 }
-impl<A: Actor> Permission<A> for Mutate {
+impl<A: Actor> Permission<A> for Modify {
     type In<'r> = &'r mut A;
     type Type<'r> = &'r mut A::Data;
 
@@ -87,7 +93,7 @@ impl<A: Actor> Permission<A> for Mutate {
     }
 }
 
-impl<A: Actor> Permission<A> for Meta {
+impl<A: Actor> Permission<A> for MetaQuery {
     type In<'r> = &'r A;
     type Type<'r> = &'r A;
 
@@ -162,7 +168,7 @@ pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 #[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
     async fn engage(self: Box<Self>, actor: &mut A) {
-        (*self).engage(actor);
+        (*self).engage(actor).await;
     }
 }
 
@@ -207,7 +213,6 @@ where
         P::pre_hook(actor);
         let input = P::reborrow(actor);
         let output = command.execute(P::data(input)).await;
-        // actor.post_mutate();
         reply.send(output);
     }
 }
@@ -294,18 +299,20 @@ impl<A: Actor> Handle<A> {
     }
 
     /// Run a read-only `Command` and await its result.
-    pub async fn call<C>(&self, command: C) -> C::Output
+    pub async fn call<C, RP>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Query, Actor = A>,
+        RP: RefPermission<A>,
+        C: IntoEnvelope<RP, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
         rx.await.expect("actor dropped")
     }
 
-    pub fn call_blocking<C>(&self, command: C) -> C::Output
+    pub fn call_blocking<C, RP>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Query, Actor = A>,
+        RP: RefPermission<A>,
+        C: IntoEnvelope<RP, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
@@ -315,17 +322,19 @@ impl<A: Actor> Handle<A> {
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
-    pub fn notify<C>(&self, command: C) -> Result<()>
+    pub fn notify<C, RP>(&self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<Query, Actor = A>,
+        RP: RefPermission<A>,
+        C: IntoEnvelope<RP, Actor = A>,
     {
         self.send_envelope(command, NoReply)
     }
 
     /// Run a `MutatingCommand` and await its result.
-    pub async fn call_mut<C>(&self, command: C) -> C::Output
+    pub async fn call_mut<C, MP>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Mutate, Actor = A>,
+        MP: MutatePermission<A>,
+        C: IntoEnvelope<MP, Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).ok();
@@ -334,21 +343,12 @@ impl<A: Actor> Handle<A> {
 
     /// Enqueue a `MutatingCommand` without waiting for its result
     /// ("cast" in classic actor-model terms — fire and forget).
-    pub fn fire_mut<C>(&self, command: C) -> Result<()>
+    pub fn fire_mut<C, MP>(&self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<Mutate, Actor = A>,
+        MP: MutatePermission<A>,
+        C: IntoEnvelope<MP, Actor = A>,
     {
         self.send_envelope(command, NoReply)
-    }
-
-    /// Run a `Meta` command and await its result.
-    pub async fn meta_call<C>(&self, command: C) -> C::Output
-    where
-        C: IntoEnvelope<MetaMutate, Actor = A>,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).ok();
-        rx.await.unwrap()
     }
 }
 
@@ -377,14 +377,12 @@ where
         let loopback = handle.clone();
         let mut actor = A::new(params, loopback);
 
-        let joiner = thread::spawn(move || {
-            actor.on_start();
-
+        let joiner = tokio::spawn(async move {
             // Sequential execution guarantee: exactly one envelope is
             // ever "in flight" because `handle(...)` is fully awaited
             // before the loop asks the transport for the next one.
             while let Ok(envelope) = A::Carrier::recv(&receiver) {
-                Box::new(envelope).engage(&mut actor);
+                Box::new(envelope).engage(&mut actor).await;
             }
 
             actor.on_stop();

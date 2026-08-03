@@ -11,16 +11,15 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::HasHandle;
 use crate::engine::manager::asset::commands::LoadAudioAsset;
+use crate::engine::manager::{HasHandle, MutatePermission, RefPermission};
 use crate::model::asset::AudioAssetID;
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
         engineconfig::EngineConfig,
         manager::{
-            Actor, Carrier, Command, Handle, IntoEnvelope, Manager, Mutate, Query, StdCarrier,
-            StdManager,
+            Command, Handle, IntoEnvelope, Manager, StdManager,
             asset::AssetActor,
             audio::{AudioActor, UpdateCmd},
             project::{ProjectActor, commands::meta::Publish},
@@ -83,7 +82,6 @@ impl Engine {
             StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
         let (asset_h, _asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
-
         Ok(Self {
             playhead,
             config,
@@ -96,7 +94,7 @@ impl Engine {
     pub async fn publish(&self, filter: Option<Vec<NodeID>>) {
         let update = self
             .project_h
-            .meta_call(Publish {
+            .call_mut(Publish {
                 asset_h: self.asset_h.clone(),
                 filter,
             })
@@ -106,7 +104,7 @@ impl Engine {
     }
 
     pub async fn load(&self, asset: LoadAudioAsset) -> Result<AudioAssetID> {
-        self.asset_h.meta_call(asset).await
+        self.asset_h.call_mut(asset).await
     }
 
     #[must_use]
@@ -142,33 +140,37 @@ impl HasHandle<AudioActor> for Engine {
 }
 
 impl Engine {
-    pub async fn get<C>(&self, command: C) -> C::Output
+    pub async fn get<C, RP>(&self, command: C) -> C::Output
     where
-        C: Command<Query> + IntoEnvelope<Query>,
+        RP: RefPermission<C::Actor>,
+        C: Command<RP> + IntoEnvelope<RP>,
         Self: HasHandle<C::Actor>,
     {
         HasHandle::<C::Actor>::handle(self).call(command).await
     }
 
-    pub async fn call_mut<C>(&self, command: C) -> C::Output
+    pub async fn call_mut<C, MP>(&self, command: C) -> C::Output
     where
-        C: Command<Mutate> + IntoEnvelope<Mutate>,
+        MP: MutatePermission<C::Actor>,
+        C: Command<MP> + IntoEnvelope<MP>,
         Self: HasHandle<C::Actor>,
     {
         HasHandle::<C::Actor>::handle(self).call_mut(command).await
     }
 
-    pub fn notify<C>(&self, command: C)
+    pub fn notify<C, RP>(&self, command: C)
     where
-        C: Command<Query> + IntoEnvelope<Query>,
+        RP: RefPermission<C::Actor>,
+        C: Command<RP> + IntoEnvelope<RP>,
         Self: HasHandle<C::Actor>,
     {
         let _ = HasHandle::<C::Actor>::handle(self).notify(command);
     }
 
-    pub fn fire_mut<C>(&self, command: C)
+    pub fn fire_mut<C, MP>(&self, command: C)
     where
-        C: Command<Mutate> + IntoEnvelope<Mutate>,
+        MP: MutatePermission<C::Actor>,
+        C: Command<MP> + IntoEnvelope<MP>,
         Self: HasHandle<C::Actor>,
     {
         let _ = HasHandle::<C::Actor>::handle(self).fire_mut(command);

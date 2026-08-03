@@ -11,7 +11,7 @@ use crate::engine::{
     CompiledGraph,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     engineconfig::EngineConfig,
-    manager::{Actor, BoxedEnvelope, Carrier, Command, Handle, HasHandle, Mutate, StdCarrier},
+    manager::{Actor, BoxedEnvelope, Carrier, Command, Handle, HasHandle, Modify, StdCarrier},
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
@@ -153,7 +153,7 @@ impl AudioActor {
 pub struct TransportCmd(pub TransportState);
 
 #[async_trait]
-impl Command<Mutate> for TransportCmd {
+impl Command<Modify> for TransportCmd {
     type Actor = AudioActor;
     type Output = ();
 
@@ -165,7 +165,7 @@ impl Command<Mutate> for TransportCmd {
 pub struct Play;
 
 #[async_trait]
-impl Command<Mutate> for Play {
+impl Command<Modify> for Play {
     type Actor = AudioActor;
     type Output = ();
 
@@ -177,7 +177,7 @@ impl Command<Mutate> for Play {
 pub struct UpdateCmd(pub GraphUpdate);
 
 #[async_trait]
-impl Command<Mutate> for UpdateCmd {
+impl Command<Modify> for UpdateCmd {
     type Output = ();
     type Actor = AudioActor;
 

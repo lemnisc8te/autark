@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::{
     engine::{
         manager::{
-            Command, Mutate,
+            Command, Modify,
             project::{ProjectActor, commands::ProjectCommand},
         },
         tick::Tick,
@@ -31,7 +31,7 @@ pub struct AddTrack<K: Kind> {
 impl<K: Kind> ProjectCommand for AddTrack<K> {}
 
 #[async_trait]
-impl<K: Kind> Command<Mutate> for AddTrack<K>
+impl<K: Kind> Command<Modify> for AddTrack<K>
 where
     TrackReader<K>: Node,
     K::Track: Stored<Actor = ProjectActor>,
@@ -50,7 +50,7 @@ pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::ID);
 impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
 #[async_trait]
-impl<K> Command<Mutate> for RemoveTrack<K>
+impl<K> Command<Modify> for RemoveTrack<K>
 where
     K: Kind,
     K::Track: Stored<Actor = ProjectActor>,
@@ -88,7 +88,7 @@ pub struct AddClip<K: Kind> {
 impl<K: Kind> ProjectCommand for AddClip<K> {}
 
 #[async_trait]
-impl<K> Command<Mutate> for AddClip<K>
+impl<K> Command<Modify> for AddClip<K>
 where
     K: Kind,
     K::Track: Stored<Actor = ProjectActor>,
@@ -111,7 +111,7 @@ pub struct MoveClip<K: Kind> {
 impl<K: Kind> ProjectCommand for MoveClip<K> {}
 
 #[async_trait]
-impl<K> Command<Mutate> for MoveClip<K>
+impl<K> Command<Modify> for MoveClip<K>
 where
     K: Kind,
     K::Track: Stored<Actor = ProjectActor>,
@@ -132,7 +132,7 @@ pub struct AddNode<N: Node> {
 impl<N: Node> ProjectCommand for AddNode<N> {}
 
 #[async_trait]
-impl<N: Node> Command<Mutate> for AddNode<N> {
+impl<N: Node> Command<Modify> for AddNode<N> {
     type Output = NodeID;
     type Actor = ProjectActor;
 
@@ -149,7 +149,7 @@ pub struct AddLink {
 impl ProjectCommand for AddLink {}
 
 #[async_trait]
-impl Command<Mutate> for AddLink {
+impl Command<Modify> for AddLink {
     type Output = Result<Option<OutputSocketID>>;
     type Actor = ProjectActor;
 
@@ -166,7 +166,7 @@ pub struct RemoveLink {
 impl ProjectCommand for RemoveLink {}
 
 #[async_trait]
-impl Command<Mutate> for RemoveLink {
+impl Command<Modify> for RemoveLink {
     type Output = Result<()>;
     type Actor = ProjectActor;
     async fn execute(self, actor: &mut ProjectData) -> Self::Output {
@@ -192,7 +192,7 @@ impl<K: Kind> AddNodeInput<K> {
 }
 
 #[async_trait]
-impl<K: Kind> Command<Mutate> for AddNodeInput<K> {
+impl<K: Kind> Command<Modify> for AddNodeInput<K> {
     type Output = Result<InputSocketID>; // index of the newly created socket
     type Actor = ProjectActor;
     async fn execute(self, actor: &mut ProjectData) -> Self::Output {
@@ -207,7 +207,7 @@ pub struct RemoveNodeInput {
 impl ProjectCommand for RemoveNodeInput {}
 
 #[async_trait]
-impl Command<Mutate> for RemoveNodeInput {
+impl Command<Modify> for RemoveNodeInput {
     type Output = Result<()>;
     type Actor = ProjectActor;
     async fn execute(self, actor: &mut ProjectData) -> Self::Output {
@@ -236,7 +236,7 @@ where
 }
 
 #[async_trait]
-impl<K, F, T> Command<Mutate> for MutateTrack<K, F, T>
+impl<K, F, T> Command<Modify> for MutateTrack<K, F, T>
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,

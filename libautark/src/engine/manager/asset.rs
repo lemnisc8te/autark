@@ -203,8 +203,8 @@ pub struct AssetActor {
     loopback: Handle<Self>,
 }
 
-impl HasHandle<AssetActor> for AssetActor {
-    fn handle(&self) -> &Handle<AssetActor> {
+impl HasHandle<Self> for AssetActor {
+    fn handle(&self) -> &Handle<Self> {
         &self.loopback
     }
 }
@@ -224,8 +224,6 @@ impl Actor for AssetActor {
             loopback,
         }
     }
-
-    fn on_start(&mut self) {}
 
     fn data(&self) -> &Self::Data {
         &self.reg
