@@ -183,7 +183,7 @@ impl<O: Send> ReplyPort<O> for NoReply {
 
 #[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    async fn engage(self: Box<Self>, handle: Handle<A>);
+    async fn engage(self: Box<Self>, handle: &mut A);
     fn priority(&self) -> PriorityLevel;
 }
 
@@ -191,7 +191,7 @@ pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
 #[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn engage(self: Box<Self>, handle: Handle<A>) {
+    async fn engage(self: Box<Self>, handle: &mut A) {
         (*self).engage(handle).await;
     }
 
@@ -236,7 +236,7 @@ where
     C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    async fn engage(self: Box<Self>, handle: Handle<A>) {
+    async fn engage(self: Box<Self>, handle: &mut A) {
         let Self { command, reply, .. } = *self;
         P::pre_hook(handle);
         let input = P::reborrow(handle);
@@ -407,8 +407,7 @@ where
 
         let joiner = tokio::spawn(async move {
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                let loopback = loopback.clone();
-                tokio::spawn(async move { Box::new(envelope).engage(loopback.clone()).await });
+                Box::new(envelope).engage(&mut actor).await;
             }
 
             actor.on_stop();
