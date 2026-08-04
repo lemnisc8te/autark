@@ -1,10 +1,11 @@
 use std::hash::Hash;
 
+use kameo::Actor;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
 
 use crate::{
-    engine::{manager::Actor, tick::Tick},
+    engine::tick::Tick,
     model::{
         arr::{
             clip::{AudioClip, Clip},
@@ -93,9 +94,9 @@ pub trait Renderable: Send {
 
 pub trait Stored: Sized {
     type ID: Key + Serialize + DeserializeOwned + Send + 'static;
-    type Actor: Actor;
+    type Data;
     type Storage;
 
-    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::ID, Self::Storage>;
-    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::ID, Self::Storage>;
+    fn access(loc: &Self::Data) -> &SlotMap<Self::ID, Self::Storage>;
+    fn access_mut(loc: &mut Self::Data) -> &mut SlotMap<Self::ID, Self::Storage>;
 }

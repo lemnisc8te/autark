@@ -1,28 +1,27 @@
-use async_trait::async_trait;
+use kameo::message::Message;
 
 use crate::{
-    engine::manager::{
-        Command, Permission, Query,
-        project::{ProjectActor, commands::ProjectCommand},
-    },
+    engine::manager::project::{ProjectActor, commands::ProjectCommand},
     model::flow::{
         NodeID,
         socket::{InputSocketID, OutputSocketID},
     },
 };
+use anyhow::Result;
 
 pub struct GetMasterNodeId;
 
 impl ProjectCommand for GetMasterNodeId {}
 
-#[async_trait]
-impl Command<Query> for GetMasterNodeId {
-    type Output = NodeID;
+impl Message<GetMasterNodeId> for ProjectActor {
+    type Reply = Result<NodeID>;
 
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        actor.master_node_id
+    async fn handle(
+        &mut self,
+        msg: GetMasterNodeId,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        Ok(self.project().master_node_id)
     }
 }
 
@@ -30,14 +29,19 @@ pub struct InputSocketOf(pub NodeID, pub usize);
 
 impl ProjectCommand for InputSocketOf {}
 
-#[async_trait]
-impl Command<Query> for InputSocketOf {
-    type Output = InputSocketID;
-
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        actor.graph.inputs_of(self.0)[self.1]
+impl Message<InputSocketOf> for ProjectActor {
+    type Reply = Result<InputSocketID>;
+    async fn handle(
+        &mut self,
+        msg: InputSocketOf,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.project()
+            .graph
+            .inputs_of(msg.0)
+            .get(msg.1)
+            .ok_or(anyhow::anyhow!("Invalid socket index"))
+            .copied()
     }
 }
 
@@ -45,13 +49,19 @@ pub struct OutputSocketOf(pub NodeID, pub usize);
 
 impl ProjectCommand for OutputSocketOf {}
 
-#[async_trait]
-impl Command<Query> for OutputSocketOf {
-    type Output = OutputSocketID;
+impl Message<OutputSocketOf> for ProjectActor {
+    type Reply = Result<OutputSocketID>;
 
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        actor.graph.outputs_of(self.0)[self.1]
+    async fn handle(
+        &mut self,
+        msg: OutputSocketOf,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.project()
+            .graph
+            .outputs_of(msg.0)
+            .get(msg.1)
+            .ok_or(anyhow::anyhow!("Invalid output socket index"))
+            .copied()
     }
 }

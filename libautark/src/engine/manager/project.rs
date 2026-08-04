@@ -1,14 +1,14 @@
 use crate::{
-    engine::manager::{BoxedEnvelope, Handle, HasHandle, StdCarrier, asset::AssetActor},
+    engine::manager::asset::AssetActor,
     model::{Audio, arr::clip::ResolvedAudioClip, flow::nodes::trackreader::TrackReaderState},
 };
 use anyhow::Result;
 use futures::future::join_all;
+use kameo::{Actor, actor::ActorRef};
 
 use crate::{
     engine::{
         constants::{MAX_BUFFER_SLOTS, MAX_NODES},
-        manager::Actor,
         state::GraphUpdate,
         tick::Tick,
     },
@@ -28,7 +28,7 @@ pub struct ProjectActor {
     pub(crate) undo_stack: Vec<ProjectData>,
     pub(crate) redo_stack: Vec<ProjectData>,
     pub(crate) known_node_ids: HashSet<NodeID>,
-    loopback: Handle<Self>,
+    loopback: ActorRef<Self>,
 }
 
 pub mod commands;
@@ -39,9 +39,14 @@ impl ProjectActor {
         &self.current
     }
 
-    pub const fn project_mut(&mut self) -> &mut ProjectData {
-        &mut self.current
+    pub fn mutate<F, O>(&mut self, f: F) -> O
+    where
+        F: FnOnce(&mut ProjectData) -> O,
+    {
+        self.commit(self.current.clone());
+        f(&mut self.current)
     }
+
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             self.redo_stack
@@ -65,7 +70,7 @@ impl ProjectActor {
     /// Builds the next `GraphUpdate`
     pub async fn publish_current(
         &mut self,
-        asset_h: &Handle<AssetActor>,
+        asset_h: &ActorRef<AssetActor>,
         filter: Option<&[NodeID]>,
     ) -> Result<GraphUpdate> {
         let schedule = self
@@ -99,7 +104,7 @@ impl ProjectActor {
 
     async fn create_node_state(
         &self,
-        asset_h: &Handle<AssetActor>,
+        asset_h: &ActorRef<AssetActor>,
         node_id: NodeID,
     ) -> (NodeID, Box<dyn Any + Send>) {
         let node = self.project().graph.nodes[node_id].clone();
@@ -174,38 +179,30 @@ impl ProjectActor {
     // }
 }
 
-impl HasHandle<Self> for ProjectActor {
-    fn handle(&self) -> &Handle<Self> {
-        &self.loopback
-    }
-}
-
-// #[async_trait]
 impl Actor for ProjectActor {
-    type Data = ProjectData;
-    type InitParams = ProjectData;
-    type Envelope = BoxedEnvelope<Self>;
-    type Carrier = StdCarrier<Self>;
-    fn pre_mutate(&mut self) {
-        let next = self.current.clone();
-        self.commit(next);
-    }
+    type Args = ProjectData;
 
-    fn data(&self) -> &Self::Data {
-        self.project()
-    }
+    type Error = anyhow::Error;
 
-    fn data_mut(&mut self) -> &mut Self::Data {
-        self.project_mut()
-    }
-
-    fn new(current: Self::InitParams, loopback: Handle<Self>) -> Self {
-        Self {
-            current,
+    async fn on_start(args: Self::Args, actor_ref: ActorRef<Self>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            current: args,
             undo_stack: vec![],
             redo_stack: vec![],
-            known_node_ids: HashSet::default(),
-            loopback,
-        }
+            known_node_ids: HashSet::new(),
+            loopback: actor_ref,
+        })
+    }
+
+    async fn on_message(
+        &mut self,
+        msg: kameo::prelude::BoxMessage<Self>,
+        actor_ref: ActorRef<Self>,
+        tx: Option<kameo::reply::BoxReplySender>,
+        stop: &mut bool,
+    ) -> Result<(), Box<dyn kameo::prelude::ReplyError>> {
+        let next = self.current.clone();
+        self.commit(next);
+        Ok(())
     }
 }

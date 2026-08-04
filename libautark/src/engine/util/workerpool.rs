@@ -9,6 +9,6 @@ impl WorkerPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        drop(tokio::task::spawn_blocking(task));
+        let _ = tokio::task::spawn_blocking(task);
     }
 }

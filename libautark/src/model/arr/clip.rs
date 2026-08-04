@@ -1,10 +1,6 @@
 use crate::{
     engine::{
-        manager::{
-            Handle,
-            asset::{AssetActor, commands::WaitForAudioAsset},
-            project::ProjectActor,
-        },
+        manager::asset::{AssetActor, commands::WaitForAudioAsset},
         tick::Tick,
     },
     model::{
@@ -14,6 +10,7 @@ use crate::{
     },
 };
 use anyhow::Result;
+use kameo::actor::ActorRef;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::new_key_type;
 
@@ -36,7 +33,7 @@ pub struct AudioClip {
 
 impl Stored for AudioClip {
     type ID = AudioClipID;
-    type Actor = ProjectActor;
+    type Data = ProjectData;
     type Storage = Self;
 
     fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
@@ -70,8 +67,11 @@ pub struct ResolvedAudioClip {
 }
 
 impl ResolvedAudioClip {
-    pub async fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
-        let asset = asset_h.call(WaitForAudioAsset(clip.asset_id)).await?;
+    pub async fn from_clip(clip: AudioClip, asset_h: ActorRef<AssetActor>) -> Result<Self> {
+        let asset = asset_h
+            .ask(WaitForAudioAsset(clip.asset_id))
+            .await
+            .expect("Failed");
         // Extract the final value after the runtime finishes blocking
         Ok(Self {
             start: clip.start,

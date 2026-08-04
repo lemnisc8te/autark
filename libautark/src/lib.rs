@@ -56,8 +56,11 @@ static A: AllocDisabler = AllocDisabler;
 use crate::{
     engine::{
         manager::{
-            asset::commands::{LoadAudioAsset, WaitForAudioAsset},
-            audio::{Play, TransportCmd},
+            asset::{
+                AssetActor,
+                commands::{LoadAudioAsset, WaitForAudioAsset},
+            },
+            audio::{AudioActor, Play, TransportCmd},
             project::commands::{
                 AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId, InputSocketOf,
                 OutputSocketOf,
@@ -67,6 +70,7 @@ use crate::{
     },
     model::{
         Audio,
+        asset::AudioAssetID,
         flow::nodes::{biquad_filter::BiquadFilter, sum::Sum},
         project::ProjectData,
     },
@@ -85,12 +89,11 @@ pub async fn demo() -> Result<()> {
 
     let song_asset = async {
         engine
-            .call_mut(LoadAudioAsset(
+            .get::<AssetActor, _>(LoadAudioAsset(
                 "./assets/AUDIO_4892.mp3".into(),
                 engine.sample_rate(),
             ))
             .await
-            .unwrap()
     }
     .shared();
 
@@ -104,7 +107,7 @@ pub async fn demo() -> Result<()> {
     };
 
     let filter1 = engine
-        .call_mut(AddNode {
+        .get(AddNode {
             node: BiquadFilter::new(
                 engine.channels(),
                 model::flow::nodes::biquad_filter::FilterType::HighPass,
@@ -120,33 +123,34 @@ pub async fn demo() -> Result<()> {
     let filter1_out = engine.get(OutputSocketOf(filter1, 0)).await;
 
     let master_sum = engine
-        .call_mut(AddNode {
+        .get(AddNode {
             node: Sum::<Audio>::new(),
         })
         .await;
+
     let master_sum_in0 = engine
-        .call_mut(AddNodeInput::<Audio>::to(master_sum))
+        .get(AddNodeInput::<Audio>::to(master_sum))
         .await
         .unwrap();
 
     let master_sum_out = engine.get(OutputSocketOf(master_sum, 0)).await;
 
     engine
-        .call_mut(AddLink {
+        .get(AddLink {
             from: filter1_out,
             to: master_sum_in0,
         })
         .await?;
 
     engine
-        .call_mut(AddLink {
+        .get(AddLink {
             from: master_sum_out,
             to: master_in,
         })
         .await?;
 
     let (song_track, song_node) = engine
-        .call_mut(AddTrack {
+        .get(AddTrack {
             name: "Song".to_string(),
             kind: Audio,
             channels: engine.channels(),
@@ -156,14 +160,14 @@ pub async fn demo() -> Result<()> {
     let song_out = engine.get(OutputSocketOf(song_node, 0)).await;
 
     engine
-        .call_mut(AddLink {
+        .get(AddLink {
             from: song_out,
             to: filter1_in,
         })
         .await?;
 
     engine
-        .call_mut(AddClip::<Audio> {
+        .get(AddClip::<Audio> {
             track: song_track,
             start: engine::tick::Tick(0),
             end: engine::tick::Tick(song_len.await?),
@@ -173,7 +177,7 @@ pub async fn demo() -> Result<()> {
 
     dbg!("Here");
     let clap_asset = engine
-        .call_mut(LoadAudioAsset(
+        .get(LoadAudioAsset(
             "./assets/clap.mp3".into(),
             engine.sample_rate(),
         ))
@@ -185,7 +189,7 @@ pub async fn demo() -> Result<()> {
     };
 
     let (clap_track, clap_node) = engine
-        .call_mut(AddTrack {
+        .get(AddTrack {
             name: "Clap".to_string(),
             kind: Audio,
             channels: engine.channels(),
@@ -193,7 +197,7 @@ pub async fn demo() -> Result<()> {
         .await;
 
     engine
-        .call_mut(AddClip::<Audio> {
+        .get(AddClip::<Audio> {
             track: clap_track,
             start: engine::tick::Tick(1000),
             end: engine::tick::Tick(clap_len.await?),
@@ -203,12 +207,10 @@ pub async fn demo() -> Result<()> {
 
     let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
 
-    let master_sum_in1 = engine
-        .call_mut(AddNodeInput::<Audio>::to(master_sum))
-        .await?;
+    let master_sum_in1 = engine.get(AddNodeInput::<Audio>::to(master_sum)).await?;
 
     engine
-        .call_mut(AddLink {
+        .get(AddLink {
             from: clap_out,
             to: master_sum_in1,
         })
@@ -217,11 +219,11 @@ pub async fn demo() -> Result<()> {
     engine.publish(None).await;
 
     engine.move_playhead(engine::tick::Tick(0));
-    engine.fire_mut(Play);
+    engine.tell(Play);
     println!("Playing... press enter to quit");
     let mut buf = String::new();
     std::io::stdin().read_line(&mut buf).unwrap();
-    engine.fire_mut(TransportCmd(TransportState::Stopped));
+    engine.tell(TransportCmd(TransportState::Stopped));
     Ok::<_, anyhow::Error>(())
 }
 

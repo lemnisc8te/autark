@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    engine::{
-        CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError,
-        manager::project::ProjectActor, tick::Tick,
-    },
+    engine::{CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError, tick::Tick},
     model::{
         DataKind, Kind, Stored,
         arr::{
@@ -64,8 +61,8 @@ impl ProjectData {
     ) -> Result<()>
     where
         K: Kind,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Data = ProjectData>,
+        K::Clip: Stored<Data = ProjectData>,
     {
         let track = K::Track::access_mut(self)
             .get_mut(track)
@@ -87,8 +84,8 @@ impl ProjectData {
     ) -> Result<<K::Clip as Stored>::ID>
     where
         K: Kind,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Data = ProjectData>,
+        K::Clip: Stored<Data = ProjectData>,
     {
         let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
         let track = K::Track::access_mut(self)
@@ -105,8 +102,8 @@ impl ProjectData {
     ) -> (<K::Track as Stored>::ID, NodeID)
     where
         TrackReader<K>: Node,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Data = ProjectData>,
+        K::Clip: Stored<Data = ProjectData>,
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
         let reader_node = TrackReader::<K>::new(track_id, channels);

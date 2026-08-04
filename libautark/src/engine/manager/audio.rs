@@ -4,14 +4,13 @@ use std::sync::{
 };
 
 use anyhow::Result;
-use async_trait::async_trait;
 use cpal::traits::StreamTrait;
+use kameo::{Actor, actor::ActorRef, message::Message};
 
 use crate::engine::{
     CompiledGraph,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     engineconfig::EngineConfig,
-    manager::{Actor, BoxedEnvelope, Command, Handle, HasHandle, Modify, StdCarrier},
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
@@ -22,14 +21,14 @@ pub struct AudioActor {
     update_tx: rtrb::Producer<GraphUpdate>,
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
-    loopback: Handle<Self>,
+    loopback: ActorRef<Self>,
 }
 
 impl AudioActor {
     pub fn init(
         config: &EngineConfig,
         playhead: Arc<AtomicU64>,
-        loopback: Handle<Self>,
+        loopback: ActorRef<Self>,
     ) -> Result<Self> {
         let transport = Arc::new(Transport::new());
         let init_update = GraphUpdate::default();
@@ -152,64 +151,57 @@ impl AudioActor {
 
 pub struct TransportCmd(pub TransportState);
 
-#[async_trait]
-impl Command<Modify> for TransportCmd {
-    type Actor = AudioActor;
-    type Output = ();
+impl Message<TransportCmd> for AudioActor {
+    type Reply = ();
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        actor.transport.transport(self.0);
+    async fn handle(
+        &mut self,
+        msg: TransportCmd,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.transport.transport(msg.0);
     }
 }
 
 pub struct Play;
 
-#[async_trait]
-impl Command<Modify> for Play {
-    type Actor = AudioActor;
-    type Output = ();
+impl Message<Play> for AudioActor {
+    type Reply = ();
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        actor.transport.play();
+    async fn handle(
+        &mut self,
+        msg: Play,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.transport.play();
     }
 }
 
 pub struct UpdateCmd(pub GraphUpdate);
 
-#[async_trait]
-impl Command<Modify> for UpdateCmd {
-    type Output = ();
-    type Actor = AudioActor;
+impl Message<UpdateCmd> for AudioActor {
+    type Reply = ();
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        if actor.update_tx.push(self.0).is_err() {
+    async fn handle(
+        &mut self,
+        msg: UpdateCmd,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        if self.update_tx.push(msg.0).is_err() {
             eprintln!("ring full, audio update dropped");
         }
     }
 }
 
-impl HasHandle<Self> for AudioActor {
-    fn handle(&self) -> &Handle<Self> {
-        &self.loopback
-    }
-}
-
 impl Actor for AudioActor {
-    type InitParams = (EngineConfig, Arc<AtomicU64>);
-    /// The audio stream is inaccessible
-    type Data = Self;
-    type Envelope = BoxedEnvelope<Self>;
-    type Carrier = StdCarrier<Self>;
+    type Args = (EngineConfig, Arc<AtomicU64>);
 
-    fn new((config, playhead): Self::InitParams, loopback: Handle<Self>) -> Self {
-        Self::init(&config, playhead, loopback).unwrap()
-    }
+    type Error = anyhow::Error;
 
-    fn data(&self) -> &Self::Data {
-        self
-    }
-
-    fn data_mut(&mut self) -> &mut Self::Data {
-        self
+    async fn on_start(
+        (config, playhead): Self::Args,
+        actor_ref: ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        Self::init(&config, playhead, actor_ref)
     }
 }

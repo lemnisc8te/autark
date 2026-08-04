@@ -40,7 +40,7 @@ pub enum AudioAssetPayload {
 
 impl Stored for AudioAsset {
     type ID = AudioAssetID;
-    type Actor = AssetActor;
+    type Data = AssetRegistry;
     type Storage = AudioAssetSlot;
 
     fn access(loc: &AssetRegistry) -> &slotmap::SlotMap<Self::ID, Self::Storage> {

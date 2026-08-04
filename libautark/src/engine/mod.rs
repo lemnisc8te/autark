@@ -11,13 +11,11 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::{HasHandle, MutatePermission, RefPermission};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
         engineconfig::EngineConfig,
         manager::{
-            Command, Handle, IntoEnvelope, Manager, StdManager,
             asset::AssetActor,
             audio::{AudioActor, UpdateCmd},
             project::{ProjectActor, commands::meta::Publish},
@@ -31,6 +29,9 @@ use crate::{
 };
 
 use anyhow::Result;
+use kameo::Actor;
+use kameo::actor::{ActorRef, Spawn};
+use kameo::message::{DynMessage, Message};
 
 pub type SlotIndex = usize;
 
@@ -51,9 +52,9 @@ pub struct CompiledGraph {
 pub struct Engine {
     pub playhead: Arc<AtomicU64>,
     config: EngineConfig,
-    asset_h: Handle<AssetActor>,
-    project_h: Handle<ProjectActor>,
-    audio_h: Handle<AudioActor>,
+    asset_h: ActorRef<AssetActor>,
+    project_h: ActorRef<ProjectActor>,
+    audio_h: ActorRef<AudioActor>,
 }
 
 impl Engine {
@@ -71,15 +72,10 @@ impl Engine {
 
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let (audio_h, _audio_j) = StdManager::<AudioActor>::spawn(
-            (config.clone(), playhead.clone()),
-            DEFAULT_MANAGER_CAPACITY,
-        );
+        let audio_h = AudioActor::spawn((config.clone(), playhead.clone()));
 
-        let (project_h, _project_join) =
-            StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
-
-        let (asset_h, _asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let project_h = ProjectActor::spawn(project);
+        let asset_h = AssetActor::spawn(());
         Ok(Self {
             playhead,
             config,
@@ -92,13 +88,13 @@ impl Engine {
     pub async fn publish(&self, filter: Option<Vec<NodeID>>) {
         let update = self
             .project_h
-            .call_mut(Publish {
+            .ask(Publish {
                 asset_h: self.asset_h.clone(),
                 filter,
             })
             .await
             .unwrap();
-        self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
+        self.audio_h.ask(UpdateCmd(update)).await.unwrap();
     }
 
     #[must_use]
@@ -116,60 +112,72 @@ impl Engine {
     }
 }
 
-impl HasHandle<ProjectActor> for Engine {
-    fn handle(&self) -> &Handle<ProjectActor> {
+pub trait HasActorRef<A: Actor> {
+    fn actor_ref(&self) -> &ActorRef<A>;
+}
+
+impl HasActorRef<ProjectActor> for Engine {
+    fn actor_ref(&self) -> &ActorRef<ProjectActor> {
         dbg!("Getting project_h");
         &self.project_h
     }
 }
-impl HasHandle<AssetActor> for Engine {
-    fn handle(&self) -> &Handle<AssetActor> {
+impl HasActorRef<AssetActor> for Engine {
+    fn actor_ref(&self) -> &ActorRef<AssetActor> {
         dbg!("Getting asset_h");
         &self.asset_h
     }
 }
 
-impl HasHandle<AudioActor> for Engine {
-    fn handle(&self) -> &Handle<AudioActor> {
+impl HasActorRef<AudioActor> for Engine {
+    fn actor_ref(&self) -> &ActorRef<AudioActor> {
         dbg!("Getting audio_h");
         &self.audio_h
     }
 }
 
 impl Engine {
-    pub async fn get<C, RP>(&self, command: C) -> C::Output
+    pub async fn get<A, C>(&self, command: C) -> <<A as Message<C>>::Reply as kameo::Reply>::Ok
     where
-        RP: RefPermission<C::Actor>,
-        C: Command<RP> + IntoEnvelope<RP>,
-        Self: HasHandle<C::Actor>,
+        A: Message<C>,
+        Self: HasActorRef<A>,
+        C: DynMessage<A> + 'static,
     {
-        HasHandle::<C::Actor>::handle(self).call(command).await
+        let aref = HasActorRef::<A>::actor_ref(self);
+        aref.ask(command).await.unwrap()
     }
 
-    pub async fn call_mut<C, MP>(&self, command: C) -> C::Output
+    pub fn tell<A, C>(&self, command: C)
     where
-        MP: MutatePermission<C::Actor>,
-        C: Command<MP> + IntoEnvelope<MP>,
-        Self: HasHandle<C::Actor>,
+        A: Message<C>,
+        Self: HasActorRef<A>,
+        C: Send + 'static,
     {
-        HasHandle::<C::Actor>::handle(self).call_mut(command).await
+        HasActorRef::<A>::actor_ref(self).tell(command);
     }
+}
 
-    pub fn notify<C, RP>(&self, command: C)
-    where
-        RP: RefPermission<C::Actor>,
-        C: Command<RP> + IntoEnvelope<RP>,
-        Self: HasHandle<C::Actor>,
-    {
-        drop(HasHandle::<C::Actor>::handle(self).notify(command));
+impl Actor for Engine {
+    type Args = ProjectData;
+
+    type Error = anyhow::Error;
+
+    async fn on_start(args: Self::Args, actor_ref: ActorRef<Self>) -> Result<Self> {
+        Self::new(args)
     }
+}
 
-    pub fn fire_mut<C, MP>(&self, command: C)
-    where
-        MP: MutatePermission<C::Actor>,
-        C: Command<MP> + IntoEnvelope<MP>,
-        Self: HasHandle<C::Actor>,
-    {
-        drop(HasHandle::<C::Actor>::handle(self).fire_mut(command));
+impl<T> Message<T> for Engine
+where
+    T: Send + 'static,
+{
+    type Reply = Result<Message<T>::Reply>;
+
+    async fn handle(
+        &mut self,
+        msg: T,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        HasActorRef::<A>::actor_ref(self).ask(msg).await?
     }
 }

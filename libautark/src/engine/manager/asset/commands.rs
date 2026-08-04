@@ -1,44 +1,42 @@
 use super::AssetActor;
 use anyhow::Result;
-use async_trait::async_trait;
+use kameo::message::{Context, Message};
 use std::path::PathBuf;
 use tokio::sync::watch;
 
 use crate::{
-    engine::manager::{
-        Command, HasHandle, MetaMutate, MetaQuery, Modify, Permission, PriorityLevel, Query,
-        asset::{AssetRegistry, AssetSlot},
-    },
+    engine::manager::asset::{AssetRegistry, AssetSlot},
     model::asset::{AssetData, AudioAsset, AudioAssetID},
 };
 
+type WatchSlot = watch::Receiver<AssetData<AudioAsset>>;
+
 pub struct SubscribeAudioAsset(pub AudioAssetID);
 
-#[async_trait]
-impl Command<Query> for SubscribeAudioAsset {
-    type Output = watch::Receiver<AssetData<AudioAsset>>;
+impl Message<SubscribeAudioAsset> for AssetActor {
+    type Reply = WatchSlot;
 
-    type Actor = AssetActor;
-
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
-        dbg!("subscribing");
-        actor.audio.get(self.0).unwrap().watch.subscribe()
+    async fn handle(
+        &mut self,
+        msg: SubscribeAudioAsset,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.reg.audio.get(msg.0).unwrap().watch.subscribe()
     }
 }
 
+type AudioAssetResult = Result<AudioAsset>;
+
 pub struct WaitForAudioAsset(pub AudioAssetID);
 
-#[async_trait]
-impl Command<MetaQuery> for WaitForAudioAsset {
-    type Output = Result<AudioAsset>;
-
-    type Actor = AssetActor;
-
-    async fn execute(
-        self,
-        actor: <MetaQuery as Permission<Self::Actor>>::Type<'_>,
-    ) -> Self::Output {
-        let mut rx = actor.reg.audio.get(self.0).unwrap().watch.subscribe();
+impl Message<WaitForAudioAsset> for AssetActor {
+    type Reply = Result<AudioAsset>;
+    async fn handle(
+        &mut self,
+        msg: WaitForAudioAsset,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let mut rx = self.reg.audio.get(msg.0).unwrap().watch.subscribe();
         dbg!("waiting");
         rx.wait_for(|data| match data {
             AssetData::Ready(_) | AssetData::Failed => true,
@@ -50,7 +48,7 @@ impl Command<MetaQuery> for WaitForAudioAsset {
         // Extract the final value after the runtime finishes blocking
         match *rx.borrow() {
             AssetData::Ready(ref asset) => Ok(asset.clone()),
-            AssetData::Failed => anyhow::bail!("asset {:?} failed to load", self.0),
+            AssetData::Failed => anyhow::bail!("asset {:?} failed to load", msg.0),
             AssetData::Pending => unreachable!(),
         }
     }
@@ -58,29 +56,27 @@ impl Command<MetaQuery> for WaitForAudioAsset {
 
 pub struct LoadAudioAsset(pub PathBuf, pub u32);
 
-#[async_trait]
-impl Command<MetaMutate> for LoadAudioAsset {
-    type Output = Result<AudioAssetID>;
+impl Message<LoadAudioAsset> for AssetActor {
+    type Reply = Result<AudioAssetID>;
 
-    type Actor = AssetActor;
-
-    async fn execute(
-        self,
-        actor: <MetaMutate as Permission<Self::Actor>>::Type<'_>,
-    ) -> Self::Output {
-        let new_key = actor.reg.audio.insert(AssetSlot::new(AssetData::Pending));
-        let handle = actor.handle().clone();
+    async fn handle(
+        &mut self,
+        msg: LoadAudioAsset,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let new_key = self.reg.audio.insert(AssetSlot::new(AssetData::Pending));
+        let loopback = self.loopback.clone();
         let key_clone = new_key;
         let task = move || {
             dbg!("in task");
-            let result = AssetRegistry::create_audio_asset(self);
-            handle.fire_mut(CompleteAudioAssetLoad {
+            let result = AssetRegistry::create_audio_asset(msg);
+            loopback.ask(CompleteAudioAssetLoad {
                 id: key_clone,
                 result,
             });
             dbg!("Sent completion update");
         };
-        actor.reg.io_pool.execute(task);
+        self.reg.io_pool.execute(task);
         dbg!("Executed task");
         Ok(new_key)
     }
@@ -90,24 +86,22 @@ pub struct CompleteAudioAssetLoad {
     id: AudioAssetID,
     result: Result<AudioAsset>,
 }
-#[async_trait]
-impl Command<Modify> for CompleteAudioAssetLoad {
-    type Output = ();
 
-    type Actor = AssetActor;
+impl Message<CompleteAudioAssetLoad> for AssetActor {
+    type Reply = ();
 
-    async fn execute(self, actor: <Modify as Permission<Self::Actor>>::Type<'_>) -> Self::Output {
+    async fn handle(
+        &mut self,
+        msg: CompleteAudioAssetLoad,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
         dbg!("Completing load");
-        let slot = actor.audio.get_mut(self.id).unwrap();
-        let data_status = match self.result {
+        let slot = self.reg.audio.get_mut(msg.id).unwrap();
+        let data_status = match msg.result {
             Ok(asset) => AssetData::Ready(asset),
             Err(_) => AssetData::Failed,
         };
         slot.watch.send(data_status);
         dbg!("Completed load");
-    }
-
-    fn priority() -> PriorityLevel {
-        PriorityLevel::High
     }
 }

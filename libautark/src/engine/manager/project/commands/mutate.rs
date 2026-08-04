@@ -1,13 +1,10 @@
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
+use kameo::message::Message;
 use std::marker::PhantomData;
 
 use crate::{
     engine::{
-        manager::{
-            Command, Modify,
-            project::{ProjectActor, commands::ProjectCommand},
-        },
+        manager::project::{ProjectActor, commands::ProjectCommand},
         tick::Tick,
     },
     model::{
@@ -30,18 +27,20 @@ pub struct AddTrack<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddTrack<K> {}
 
-#[async_trait]
-impl<K: Kind> Command<Modify> for AddTrack<K>
+impl<K: Kind> Message<AddTrack<K>> for ProjectActor
 where
     TrackReader<K>: Node,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Data = ProjectData>,
+    K::Clip: Stored<Data = ProjectData>,
 {
-    type Output = (<K::Track as Stored>::ID, NodeID);
-    type Actor = ProjectActor;
+    type Reply = (<K::Track as Stored>::ID, NodeID);
 
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_track::<K>(self.name, self.channels)
+    async fn handle(
+        &mut self,
+        msg: AddTrack<K>,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.add_track::<K>(msg.name, msg.channels))
     }
 }
 
@@ -49,32 +48,33 @@ pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::ID);
 
 impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for RemoveTrack<K>
+impl<K> Message<RemoveTrack<K>> for ProjectActor
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Data = ProjectData>,
+    K::Clip: Stored<Data = ProjectData>,
 {
-    type Output = Result<()>;
-    type Actor = ProjectActor;
+    type Reply = Result<()>;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        {
-            let this = &mut *actor;
-            let track_id = self.0;
-            let track = <K as Kind>::Track::access_mut(this)
+    async fn handle(
+        &mut self,
+        msg: RemoveTrack<K>,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| {
+            let track_id = msg.0;
+            let track = <K as Kind>::Track::access_mut(proj)
                 .remove(track_id)
                 .ok_or(crate::engine::errors::EngineError::TrackNotFound)?;
             let linked_id = track
                 .linked_node_id()
                 .expect("Track was orphaned from node");
-            this.graph.purge(linked_id);
+            proj.graph.purge(linked_id);
             for clip_id in track.clips().values() {
-                <K as Kind>::Clip::access_mut(this).remove(*clip_id);
+                <K as Kind>::Clip::access_mut(proj).remove(*clip_id);
             }
             Ok(())
-        }
+        })
     }
 }
 
@@ -87,18 +87,19 @@ pub struct AddClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddClip<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for AddClip<K>
+impl<K> Message<AddClip<K>> for ProjectActor
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Data = ProjectData>,
+    K::Clip: Stored<Data = ProjectData>,
 {
-    type Output = Result<<K::Clip as Stored>::ID>;
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
+    type Reply = Result<<K::Clip as Stored>::ID>;
+    async fn handle(
+        &mut self,
+        msg: AddClip<K>,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.add_clip_to_track::<K>(msg.track, msg.start, msg.end, msg.asset_id))
     }
 }
 
@@ -110,18 +111,19 @@ pub struct MoveClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for MoveClip<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for MoveClip<K>
+impl<K> Message<MoveClip<K>> for ProjectActor
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Data = ProjectData>,
+    K::Clip: Stored<Data = ProjectData>,
 {
-    type Output = Result<()>;
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.move_clip::<K>(self.track, self.clip, self.new_start)
+    type Reply = Result<()>;
+    async fn handle(
+        &mut self,
+        msg: MoveClip<K>,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.move_clip::<K>(msg.track, msg.clip, msg.new_start))
     }
 }
 
@@ -131,13 +133,14 @@ pub struct AddNode<N: Node> {
 
 impl<N: Node> ProjectCommand for AddNode<N> {}
 
-#[async_trait]
-impl<N: Node> Command<Modify> for AddNode<N> {
-    type Output = NodeID;
-    type Actor = ProjectActor;
-
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.graph.add_node(self.node)
+impl<N: Node> Message<AddNode<N>> for ProjectActor {
+    type Reply = Result<NodeID>;
+    async fn handle(
+        &mut self,
+        msg: AddNode<N>,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        Ok(self.mutate(|proj| proj.graph.add_node(msg.node)))
     }
 }
 
@@ -148,13 +151,15 @@ pub struct AddLink {
 
 impl ProjectCommand for AddLink {}
 
-#[async_trait]
-impl Command<Modify> for AddLink {
-    type Output = Result<Option<OutputSocketID>>;
-    type Actor = ProjectActor;
+impl Message<AddLink> for ProjectActor {
+    type Reply = Result<Option<OutputSocketID>>;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_link(self.from, self.to)
+    async fn handle(
+        &mut self,
+        msg: AddLink,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.add_link(msg.from, msg.to))
     }
 }
 
@@ -165,12 +170,15 @@ pub struct RemoveLink {
 
 impl ProjectCommand for RemoveLink {}
 
-#[async_trait]
-impl Command<Modify> for RemoveLink {
-    type Output = Result<()>;
-    type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.remove_link(self.from, self.to)
+impl Message<RemoveLink> for ProjectActor {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: RemoveLink,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.remove_link(msg.from, msg.to))
     }
 }
 
@@ -191,12 +199,17 @@ impl<K: Kind> AddNodeInput<K> {
     }
 }
 
-#[async_trait]
-impl<K: Kind> Command<Modify> for AddNodeInput<K> {
-    type Output = Result<InputSocketID>; // index of the newly created socket
-    type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_input_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+impl<K: Kind> Message<AddNodeInput<K>> for ProjectActor {
+    type Reply = Result<InputSocketID>; // index of the newly created socket
+
+    async fn handle(
+        &mut self,
+        msg: AddNodeInput<K>,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| {
+            proj.add_input_socket_to_node(msg.node_id, Socket::new(K::into_datakind(), "in", true))
+        })
     }
 }
 
@@ -206,12 +219,15 @@ pub struct RemoveNodeInput {
 
 impl ProjectCommand for RemoveNodeInput {}
 
-#[async_trait]
-impl Command<Modify> for RemoveNodeInput {
-    type Output = Result<()>;
-    type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.remove_node_input(self.node_id)
+impl Message<RemoveNodeInput> for ProjectActor {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: RemoveNodeInput,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| proj.remove_node_input(msg.node_id))
     }
 }
 
@@ -235,21 +251,25 @@ where
 {
 }
 
-#[async_trait]
-impl<K, F, T> Command<Modify> for MutateTrack<K, F, T>
+impl<K, F, T> Message<MutateTrack<K, F, T>> for ProjectActor
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
     T: Send + 'static,
-    K::Track: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Data = ProjectData>,
 {
-    type Output = Result<T>;
-    type Actor = ProjectActor;
+    type Reply = Result<T>;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        let the_ref = K::Track::access_mut(actor)
-            .get_mut(self.id)
-            .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
-        Ok((self.func)(the_ref))
+    async fn handle(
+        &mut self,
+        msg: MutateTrack<K, F, T>,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.mutate(|proj| {
+            let the_ref = K::Track::access_mut(proj)
+                .get_mut(msg.id)
+                .ok_or(anyhow!("Invalid Key: {:?}", msg.id))?;
+            Ok((msg.func)(the_ref))
+        })
     }
 }

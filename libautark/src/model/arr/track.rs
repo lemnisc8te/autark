@@ -38,7 +38,7 @@ pub struct AudioTrack {
 
 impl Stored for AudioTrack {
     type ID = AudioTrackID;
-    type Actor = ProjectActor;
+    type Data = ProjectData;
     type Storage = Self;
 
     fn access(loc: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {

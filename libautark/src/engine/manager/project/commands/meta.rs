@@ -1,7 +1,6 @@
 use crate::{
     engine::{
         manager::{
-            Command, Handle, MetaMutate,
             asset::AssetActor,
             project::{ProjectActor, commands::ProjectCommand},
         },
@@ -10,23 +9,24 @@ use crate::{
     model::flow::NodeID,
 };
 use anyhow::Result;
-use async_trait::async_trait;
+use kameo::{actor::ActorRef, message::Message};
 
 pub struct Publish {
-    pub asset_h: Handle<AssetActor>,
+    pub asset_h: ActorRef<AssetActor>,
     pub filter: Option<Vec<NodeID>>,
 }
 
 impl ProjectCommand for Publish {}
-#[async_trait]
-impl Command<MetaMutate> for Publish {
-    type Output = Result<GraphUpdate>;
 
-    type Actor = ProjectActor;
+impl Message<Publish> for ProjectActor {
+    type Reply = Result<GraphUpdate>;
 
-    async fn execute(self, actor: &mut ProjectActor) -> Self::Output {
-        actor
-            .publish_current(&self.asset_h, self.filter.as_deref())
+    async fn handle(
+        &mut self,
+        msg: Publish,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.publish_current(&msg.asset_h, msg.filter.as_deref())
             .await
     }
 }

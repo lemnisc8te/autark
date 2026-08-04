@@ -1,24 +1,21 @@
 //! Asset loading — the one place symphonia is used. Fully in-memory decode;
 //! streaming/paging would only change this function's internals.
 
-use anyhow::Result;
-use slotmap::SlotMap;
-use std::fs::File;
-use std::sync::Arc;
-use tokio::sync::watch;
-
 use crate::{
-    engine::{
-        manager::{
-            Actor, BoxedEnvelope, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset,
-        },
-        util::workerpool::WorkerPool,
-    },
+    engine::{manager::asset::commands::LoadAudioAsset, util::workerpool::WorkerPool},
     model::{
         Audio, Kind,
         asset::{AssetData, AudioAsset, AudioAssetID, AudioAssetPayload},
     },
 };
+
+use kameo::{Actor, actor::ActorRef};
+
+use anyhow::Result;
+use slotmap::SlotMap;
+use std::fs::File;
+use std::sync::Arc;
+use tokio::sync::watch;
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
@@ -199,38 +196,21 @@ impl AssetRegistry {
     }
 }
 
+// #[derive(Actor)]
 pub struct AssetActor {
     reg: AssetRegistry,
-    loopback: Handle<Self>,
-}
-
-impl HasHandle<Self> for AssetActor {
-    fn handle(&self) -> &Handle<Self> {
-        &self.loopback
-    }
+    loopback: ActorRef<Self>,
 }
 
 impl Actor for AssetActor {
-    type InitParams = ();
+    type Args = ();
 
-    type Data = AssetRegistry;
+    type Error = anyhow::Error;
 
-    type Envelope = BoxedEnvelope<Self>;
-
-    type Carrier = StdCarrier<Self>;
-
-    fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
-        Self {
+    async fn on_start(_args: Self::Args, actor_ref: ActorRef<Self>) -> Result<Self> {
+        Ok(Self {
             reg: AssetRegistry::new(),
-            loopback,
-        }
-    }
-
-    fn data(&self) -> &Self::Data {
-        &self.reg
-    }
-
-    fn data_mut(&mut self) -> &mut Self::Data {
-        &mut self.reg
+            loopback: actor_ref,
+        })
     }
 }
