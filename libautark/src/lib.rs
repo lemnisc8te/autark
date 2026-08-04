@@ -76,6 +76,8 @@ use anyhow::Result;
 use engine::Engine;
 use futures::FutureExt;
 pub async fn demo() -> Result<()> {
+    const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
+    dbg!(CRATE_PATH);
     let engine = {
         let project = ProjectData::new();
         Engine::new(project).unwrap()
@@ -86,7 +88,7 @@ pub async fn demo() -> Result<()> {
     let song_asset = async {
         engine
             .get(LoadAudioAsset(
-                "./assets/AUDIO_4892.mp3".into(),
+                format!("{CRATE_PATH}/assets/AUDIO_4892.mp3").into(),
                 engine.sample_rate(),
             ))
             .await
@@ -162,19 +164,10 @@ pub async fn demo() -> Result<()> {
         })
         .await?;
 
-    engine
-        .get(AddClip::<Audio> {
-            track_id: song_track,
-            start: engine::tick::Tick(0),
-            end: engine::tick::Tick(song_len.await?),
-            asset_id: song_asset.await,
-        })
-        .await?;
-
     dbg!("Here");
     let clap_asset = engine
         .get(LoadAudioAsset(
-            "./assets/clap.mp3".into(),
+            format!("{CRATE_PATH}/assets/clap.mp3").into(),
             engine.sample_rate(),
         ))
         .await?;
@@ -192,34 +185,40 @@ pub async fn demo() -> Result<()> {
         })
         .await;
 
+    let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
+
+    let master_sum_in1 = engine.get(AddNodeInput::<Audio>::to(master_sum)).await?;
     engine
-        .get(AddClip::<Audio> {
+        .fire(AddClip::<Audio> {
+            track_id: song_track,
+            start: engine::tick::Tick(0),
+            end: engine::tick::Tick(song_len.await?),
+            asset_id: song_asset.await,
+        })
+        .await;
+    engine
+        .fire(AddClip::<Audio> {
             track_id: clap_track,
             start: engine::tick::Tick(1000),
             end: engine::tick::Tick(clap_len.await?),
             asset_id: clap_asset,
         })
-        .await?;
-
-    let clap_out = engine.get(OutputSocketOf(clap_node, 0)).await;
-
-    let master_sum_in1 = engine.get(AddNodeInput::<Audio>::to(master_sum)).await?;
+        .await;
 
     engine
-        .get(AddLink {
+        .fire(AddLink {
             from: clap_out,
             to: master_sum_in1,
         })
-        .await?;
+        .await;
 
     engine.publish(None).await;
 
     engine.move_playhead(engine::tick::Tick(0));
-    engine.fire(Play);
-    println!("Playing... press enter to quit");
+    engine.fire(Play).await;
     let mut buf = String::new();
     std::io::stdin().read_line(&mut buf).unwrap();
-    engine.fire(TransportCmd(TransportState::Stopped));
+    engine.fire(TransportCmd(TransportState::Stopped)).await;
     Ok::<_, anyhow::Error>(())
 }
 

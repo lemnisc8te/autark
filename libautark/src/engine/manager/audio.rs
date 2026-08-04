@@ -18,13 +18,6 @@ use crate::engine::{
     util::abp::AudioBufferPool,
 };
 
-pub struct SyncConsumer<T>(pub rtrb::Consumer<T>);
-
-// SAFETY: We guarantee that despite implementing Sync,
-// the underlying Consumer will only ever be accessed from a single thread
-// at a time, fulfilling the single-producer single-consumer contract safely.
-unsafe impl<T: Send> Sync for SyncConsumer<T> {}
-
 pub struct SyncProducer<T>(pub rtrb::Producer<T>);
 
 // SAFETY: We guarantee that despite implementing Sync,
@@ -96,34 +89,38 @@ impl AudioActor {
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                // assert_no_alloc::assert_no_alloc(|| {
-                data.fill(T::from_sample(0.0));
-                // Tier 1: drain any pending structural updates. Zero
-                // allocation: everything was pre-built off-thread.
-                while let Ok(mut update) = update_rx.pop() {
-                    state_pool.apply(&mut update, &mut garbage_tx);
-                    if let Some(old) = current.replace(update) {
-                        let _ = garbage_tx.push(Garbage::Update(old));
+                assert_no_alloc::assert_no_alloc(|| {
+                    data.fill(T::from_sample(0.0));
+                    // Tier 1: drain any pending structural updates. Zero
+                    // allocation: everything was pre-built off-thread.
+                    while let Ok(mut update) = update_rx.pop() {
+                        state_pool.apply(&mut update, &mut garbage_tx);
+                        if let Some(old) = current.replace(update) {
+                            let _ = garbage_tx.push(Garbage::Update(old));
+                        }
                     }
-                }
 
-                if !transport.is_playing() {
-                    return;
-                }
-                let frame_count = data.len() / channels as usize;
-                let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
+                    if !transport.is_playing() {
+                        return;
+                    }
+                    let frame_count = data.len() / channels as usize;
+                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
-                let Some(GraphUpdate { schedule, .. }) = current.as_ref() else {
-                    return;
-                };
+                    let Some(GraphUpdate { schedule, .. }) = current.as_ref() else {
+                        return;
+                    };
 
-                let mixed =
-                    Self::execute_block(schedule, Tick(start), &mut buffer_pool, &mut state_pool);
+                    let mixed = Self::execute_block(
+                        schedule,
+                        Tick(start),
+                        &mut buffer_pool,
+                        &mut state_pool,
+                    );
 
-                for (dst, &src) in data.iter_mut().zip(mixed) {
-                    *dst = T::from_sample(src);
-                }
-                // });
+                    for (dst, &src) in data.iter_mut().zip(mixed) {
+                        *dst = T::from_sample(src);
+                    }
+                });
             },
             move |err| eprintln!("audio stream error: {err}"),
             None,
@@ -181,6 +178,7 @@ impl Command for Play {
     type Output = ();
 
     async fn execute(self, actor: &AudioActor) -> Self::Output {
+        println!("Playing... press enter to quit");
         actor.transport.play();
     }
 }
@@ -195,7 +193,7 @@ impl Command for UpdateCmd {
         actor
             .mutate(async |update_tx| {
                 if update_tx.0.push(self.0).is_err() {
-                    eprintln!("ring full, audio update dropped");
+                    panic!("ring full, audio update dropped");
                 }
             })
             .await;
@@ -210,6 +208,7 @@ impl HasHandle<Self> for AudioActor {
 
 impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
+
     /// The audio stream is inaccessible
     type Envelope = BoxedEnvelope<Self>;
     type Carrier = StdCarrier<Self>;

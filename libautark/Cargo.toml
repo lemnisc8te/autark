@@ -7,7 +7,6 @@ edition = "2024"
 anyhow = {workspace = true}
 arc-swap = "1.9.2"
 assert_no_alloc = "1.1.2"
-async-priority-channel = "0.2.0"
 async-trait = "0.1.91"
 audio-blocks = "0.7.0"
 audioadapter-buffers = "4.0.0"
@@ -23,5 +22,4 @@ slotmap = {version = "1.1.1", features = ["serde"]}
 symphonia = {version = "0.6.0", features = ["mp3"]}
 thiserror = {workspace = true}
 tokio = { workspace = true }
-triple_buffer = "9.0.0"
 

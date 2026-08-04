@@ -42,7 +42,7 @@ pub trait IntoEnvelope: Command {
 
 pub trait Command: Send + 'static {
     type Output: Send + 'static;
-    type Actor: Actor + Operate;
+    type Actor: Actor + Operate + 'static;
 
     fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> + Send;
 }
@@ -59,7 +59,7 @@ pub trait ReplyPort<O: Send>: Send {
 /// Deliver the output back to a caller that is waiting for it.
 pub struct Reply<O>(oneshot::Sender<O>);
 
-impl<O: Send + 'static> ReplyPort<O> for Reply<O> {
+impl<O: Send> ReplyPort<O> for Reply<O> {
     fn send(self, output: O) {
         // A dropped receiver just means the caller stopped waiting.
         let _ = self.0.send(output);
@@ -218,7 +218,9 @@ impl<A: Actor> Handle<A> {
         C: IntoEnvelope<Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).await.ok();
+        self.send_envelope(command, Reply(tx))
+            .await
+            .expect("Send Failed");
         rx.await.expect("actor dropped")
     }
 
@@ -258,7 +260,7 @@ where
         let loopback = handle.clone();
         let actor = A::new(params, loopback.clone());
 
-        let joiner = tokio::spawn(async move {
+        tokio::spawn(async move {
             let actor = Arc::new(actor);
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
                 Box::new(envelope).engage(actor.clone()).await;
@@ -295,7 +297,7 @@ where
         let handle = Handle { sender };
         let loopback = handle.clone();
 
-        let joiner = tokio::spawn(async move {
+        tokio::spawn(async move {
             let actor = Arc::new(A::new(params, loopback.clone()));
 
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
@@ -309,7 +311,6 @@ where
 
             actor.on_stop();
         });
-        drop(joiner);
 
         handle
     }

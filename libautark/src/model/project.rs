@@ -30,7 +30,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use futures::future::join_all;
+use futures::future::{join_all, try_join_all};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
@@ -332,14 +332,19 @@ impl ProjectMetaData {
         let node = self.project().graph.nodes[node_id].clone();
         if let Some(n) = node.as_any().downcast_ref::<TrackReader<Audio>>() {
             let track_id = n.id;
-            let mut the_clips: BTreeMap<Tick, ResolvedAudioClip> = BTreeMap::new();
-            for (tick, clipid) in &self.project().tracks[track_id].clips {
-                let the_clip = self.project().clips[*clipid];
-                let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone())
-                    .await
-                    .unwrap();
-                the_clips.insert(*tick, resolved);
-            }
+            let (ticks, clips): (Vec<Tick>, Vec<_>) = self.project().tracks[track_id]
+                .clips
+                .iter()
+                .map(|(tick, clipid)| {
+                    let the_clip = self.project().clips[*clipid];
+                    let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone());
+                    (tick, resolved)
+                })
+                .unzip();
+            let clips = try_join_all(clips).await.unwrap();
+            let the_clips: BTreeMap<Tick, ResolvedAudioClip> =
+                ticks.into_iter().zip(clips).collect();
+
             (
                 node_id,
                 Box::new(TrackReaderState { clips: the_clips }) as Box<dyn Any + Send>,

@@ -11,7 +11,7 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::HasHandle;
+use crate::engine::manager::{HasHandle, MultithreadManager};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
@@ -80,9 +80,10 @@ impl Engine {
             DEFAULT_MANAGER_CAPACITY,
         );
 
-        let project_h = StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
+        let project_h =
+            MultithreadManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
-        let asset_h = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let asset_h = MultithreadManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
         Ok(Self {
             playhead,
             config,
@@ -121,20 +122,20 @@ impl Engine {
 
 impl HasHandle<ProjectActor> for Engine {
     fn handle(&self) -> &Handle<ProjectActor> {
-        dbg!("Getting project_h");
+        // dbg!("Getting project_h");
         &self.project_h
     }
 }
 impl HasHandle<AssetActor> for Engine {
     fn handle(&self) -> &Handle<AssetActor> {
-        dbg!("Getting asset_h");
+        // dbg!("Getting asset_h");
         &self.asset_h
     }
 }
 
 impl HasHandle<AudioActor> for Engine {
     fn handle(&self) -> &Handle<AudioActor> {
-        dbg!("Getting audio_h");
+        // dbg!("Getting audio_h");
         &self.audio_h
     }
 }
@@ -148,11 +149,11 @@ impl Engine {
         HasHandle::<C::Actor>::handle(self).call(command).await
     }
 
-    pub fn fire<C>(&self, command: C)
+    pub async fn fire<C>(&self, command: C)
     where
         C: IntoEnvelope,
         Self: HasHandle<C::Actor>,
     {
-        drop(HasHandle::<C::Actor>::handle(self).notify(command));
+        let _ = HasHandle::<C::Actor>::handle(self).notify(command).await;
     }
 }

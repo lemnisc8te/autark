@@ -71,11 +71,11 @@ pub struct ResolvedAudioClip {
 impl ResolvedAudioClip {
     pub async fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
         let asset = asset_h.call(WaitForAudioAsset(clip.asset_id)).await?;
-        // Extract the final value after the runtime finishes blocking
+
         Ok(Self {
             start: clip.start,
             length: clip.length,
-            asset: asset.clone(), // Assumes your asset type implements Clone
+            asset: asset.clone(),
         })
     }
 }

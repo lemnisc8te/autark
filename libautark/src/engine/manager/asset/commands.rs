@@ -19,7 +19,6 @@ impl Command for SubscribeAudioAsset {
     type Actor = AssetActor;
 
     fn execute(self, actor: &AssetActor) -> impl Future<Output = Self::Output> + Send {
-        dbg!("subscribing");
         actor.query(async move |reg| reg.audio.get(self.0).unwrap().watch.subscribe())
     }
 }
@@ -34,13 +33,11 @@ impl Command for WaitForAudioAsset {
     fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> {
         actor.query(async move |reg| {
             let mut rx = reg.audio.get(self.0).unwrap().watch.subscribe();
-            dbg!("waiting");
             rx.wait_for(|data| match data {
                 AssetData::Ready(_) | AssetData::Failed => true,
                 AssetData::Pending => false,
             })
             .await?;
-            dbg!("updated");
 
             // Extract the final value after the runtime finishes blocking
             match *rx.borrow() {
@@ -54,7 +51,6 @@ impl Command for WaitForAudioAsset {
 
 pub struct LoadAudioAsset(pub PathBuf, pub u32);
 
-// #[async_trait]
 impl Command for LoadAudioAsset {
     type Output = Result<AudioAssetID>;
 
@@ -66,16 +62,18 @@ impl Command for LoadAudioAsset {
             .await;
 
         let result =
-            tokio::task::spawn_blocking(async || AssetRegistry::create_audio_asset(self)).await?;
-        actor.mutate(async |reg| {
-            let slot = reg.audio.get_mut(new_key).unwrap();
-            let data_status = match result.await {
-                Ok(asset) => AssetData::Ready(asset),
-                Err(_) => AssetData::Failed,
-            };
-            slot.watch.send(data_status);
-            dbg!("Completed load");
-        });
+            tokio::task::spawn_blocking(|| AssetRegistry::create_audio_asset(self)).await?;
+        actor
+            .mutate(async |reg| {
+                let slot = reg.audio.get_mut(new_key).unwrap();
+                let data_status = match result {
+                    Ok(asset) => AssetData::Ready(asset),
+                    Err(_) => AssetData::Failed,
+                };
+                slot.watch.send_modify(|status| *status = data_status);
+            })
+            .await;
+
         Ok(new_key)
     }
 }
