@@ -11,13 +11,13 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::{HasHandle, MutatePermission, RefPermission};
+use crate::engine::manager::HasHandle;
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
         engineconfig::EngineConfig,
         manager::{
-            Command, Handle, IntoEnvelope, Manager, StdManager,
+            Handle, IntoEnvelope, Manager, StdManager,
             asset::AssetActor,
             audio::{AudioActor, UpdateCmd},
             project::{ProjectActor, commands::meta::Publish},
@@ -34,6 +34,7 @@ use anyhow::Result;
 
 pub type SlotIndex = usize;
 
+#[derive(Clone)]
 pub struct ScheduleStep {
     pub node: Arc<dyn ErasedNode>,
     pub node_id: NodeID,
@@ -41,7 +42,10 @@ pub struct ScheduleStep {
     pub output_slots: Vec<SlotIndex>,
 }
 
-#[derive(Default)]
+unsafe impl Send for ScheduleStep {}
+unsafe impl Sync for ScheduleStep {}
+
+#[derive(Default, Clone)]
 pub struct CompiledGraph {
     pub steps: Vec<ScheduleStep>,
     pub buffer_count: usize,
@@ -71,15 +75,14 @@ impl Engine {
 
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let (audio_h, _audio_j) = StdManager::<AudioActor>::spawn(
+        let audio_h = StdManager::<AudioActor>::spawn(
             (config.clone(), playhead.clone()),
             DEFAULT_MANAGER_CAPACITY,
         );
 
-        let (project_h, _project_join) =
-            StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
+        let project_h = StdManager::<ProjectActor>::spawn(project, DEFAULT_MANAGER_CAPACITY);
 
-        let (asset_h, _asset_j) = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
+        let asset_h = StdManager::<AssetActor>::spawn((), DEFAULT_MANAGER_CAPACITY);
         Ok(Self {
             playhead,
             config,
@@ -92,13 +95,13 @@ impl Engine {
     pub async fn publish(&self, filter: Option<Vec<NodeID>>) {
         let update = self
             .project_h
-            .call_mut(Publish {
+            .call(Publish {
                 asset_h: self.asset_h.clone(),
                 filter,
             })
             .await
             .unwrap();
-        self.audio_h.fire_mut(UpdateCmd(update)).await.unwrap();
+        self.audio_h.call(UpdateCmd(update)).await;
     }
 
     #[must_use]
@@ -137,39 +140,19 @@ impl HasHandle<AudioActor> for Engine {
 }
 
 impl Engine {
-    pub async fn get<C, RP>(&self, command: C) -> C::Output
+    pub async fn get<C>(&self, command: C) -> C::Output
     where
-        RP: RefPermission<C::Actor>,
-        C: Command<RP> + IntoEnvelope<RP>,
+        C: IntoEnvelope,
         Self: HasHandle<C::Actor>,
     {
         HasHandle::<C::Actor>::handle(self).call(command).await
     }
 
-    pub async fn call_mut<C, MP>(&self, command: C) -> C::Output
+    pub fn fire<C>(&self, command: C)
     where
-        MP: MutatePermission<C::Actor>,
-        C: Command<MP> + IntoEnvelope<MP>,
-        Self: HasHandle<C::Actor>,
-    {
-        HasHandle::<C::Actor>::handle(self).call_mut(command).await
-    }
-
-    pub fn notify<C, RP>(&self, command: C)
-    where
-        RP: RefPermission<C::Actor>,
-        C: Command<RP> + IntoEnvelope<RP>,
+        C: IntoEnvelope,
         Self: HasHandle<C::Actor>,
     {
         drop(HasHandle::<C::Actor>::handle(self).notify(command));
-    }
-
-    pub fn fire_mut<C, MP>(&self, command: C)
-    where
-        MP: MutatePermission<C::Actor>,
-        C: Command<MP> + IntoEnvelope<MP>,
-        Self: HasHandle<C::Actor>,
-    {
-        drop(HasHandle::<C::Actor>::handle(self).fire_mut(command));
     }
 }

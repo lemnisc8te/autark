@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
 
 use crate::{
-    engine::{manager::Actor, tick::Tick},
+    engine::tick::Tick,
     model::{
         arr::{
             clip::{AudioClip, Clip},
@@ -91,11 +91,15 @@ pub trait Renderable: Send {
     fn render(&self, block: &mut RenderBlock);
 }
 
+pub trait Location {
+    type Data;
+}
+
 pub trait Stored: Sized {
     type ID: Key + Serialize + DeserializeOwned + Send + 'static;
-    type Actor: Actor;
+    type Location;
     type Storage;
 
-    fn access(loc: &<Self::Actor as Actor>::Data) -> &SlotMap<Self::ID, Self::Storage>;
-    fn access_mut(loc: &mut <Self::Actor as Actor>::Data) -> &mut SlotMap<Self::ID, Self::Storage>;
+    fn access(loc: &Self::Location) -> &SlotMap<Self::ID, Self::Storage>;
+    fn access_mut(loc: &mut Self::Location) -> &mut SlotMap<Self::ID, Self::Storage>;
 }

@@ -4,22 +4,36 @@ use std::sync::{
 };
 
 use anyhow::Result;
-use async_trait::async_trait;
 use cpal::traits::StreamTrait;
+use tokio::sync::RwLock;
 
 use crate::engine::{
     CompiledGraph,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     engineconfig::EngineConfig,
-    manager::{Actor, BoxedEnvelope, Command, Handle, HasHandle, Modify, StdCarrier},
+    manager::{Actor, BoxedEnvelope, Command, Handle, HasHandle, Operate, StdCarrier},
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
     util::abp::AudioBufferPool,
 };
 
+pub struct SyncConsumer<T>(pub rtrb::Consumer<T>);
+
+// SAFETY: We guarantee that despite implementing Sync,
+// the underlying Consumer will only ever be accessed from a single thread
+// at a time, fulfilling the single-producer single-consumer contract safely.
+unsafe impl<T: Send> Sync for SyncConsumer<T> {}
+
+pub struct SyncProducer<T>(pub rtrb::Producer<T>);
+
+// SAFETY: We guarantee that despite implementing Sync,
+// the underlying Consumer will only ever be accessed from a single thread
+// at a time, fulfilling the single-producer single-consumer contract safely.
+unsafe impl<T: Send> Sync for SyncProducer<T> {}
+
 pub struct AudioActor {
-    update_tx: rtrb::Producer<GraphUpdate>,
+    update_tx: Arc<RwLock<SyncProducer<GraphUpdate>>>,
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
     loopback: Handle<Self>,
@@ -40,7 +54,6 @@ impl AudioActor {
         // Seed the ring with the initial graph so the audio thread has
         // something to play from the very first callback.
         let _ = update_tx.push(init_update);
-
         // Background thread: the only place anything from the audio thread
         // actually gets dropped/deallocated.
         std::thread::spawn(move || {
@@ -57,7 +70,7 @@ impl AudioActor {
         stream.play()?; // device stream runs continuously; transport gates output
         Ok(Self {
             transport,
-            update_tx,
+            update_tx: Arc::new(SyncProducer(update_tx).into()),
             _stream: stream,
             loopback,
         })
@@ -152,39 +165,40 @@ impl AudioActor {
 
 pub struct TransportCmd(pub TransportState);
 
-#[async_trait]
-impl Command<Modify> for TransportCmd {
+impl Command for TransportCmd {
     type Actor = AudioActor;
     type Output = ();
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
+    async fn execute(self, actor: &AudioActor) -> Self::Output {
         actor.transport.transport(self.0);
     }
 }
 
 pub struct Play;
 
-#[async_trait]
-impl Command<Modify> for Play {
+impl Command for Play {
     type Actor = AudioActor;
     type Output = ();
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
+    async fn execute(self, actor: &AudioActor) -> Self::Output {
         actor.transport.play();
     }
 }
 
 pub struct UpdateCmd(pub GraphUpdate);
 
-#[async_trait]
-impl Command<Modify> for UpdateCmd {
+impl Command for UpdateCmd {
     type Output = ();
     type Actor = AudioActor;
 
-    async fn execute(self, actor: &mut AudioActor) -> Self::Output {
-        if actor.update_tx.push(self.0).is_err() {
-            eprintln!("ring full, audio update dropped");
-        }
+    async fn execute(self, actor: &AudioActor) -> Self::Output {
+        actor
+            .mutate(async |update_tx| {
+                if update_tx.0.push(self.0).is_err() {
+                    eprintln!("ring full, audio update dropped");
+                }
+            })
+            .await;
     }
 }
 
@@ -197,19 +211,22 @@ impl HasHandle<Self> for AudioActor {
 impl Actor for AudioActor {
     type InitParams = (EngineConfig, Arc<AtomicU64>);
     /// The audio stream is inaccessible
-    type Data = Self;
     type Envelope = BoxedEnvelope<Self>;
     type Carrier = StdCarrier<Self>;
 
     fn new((config, playhead): Self::InitParams, loopback: Handle<Self>) -> Self {
         Self::init(&config, playhead, loopback).unwrap()
     }
+}
 
-    fn data(&self) -> &Self::Data {
-        self
+impl Operate for AudioActor {
+    type Data = SyncProducer<GraphUpdate>;
+    async fn mutate<O>(&self, f: impl AsyncFnOnce(&mut Self::Data) -> O) -> O {
+        let mut lock = self.update_tx.write().await;
+        f(&mut lock).await
     }
 
-    fn data_mut(&mut self) -> &mut Self::Data {
-        self
+    async fn query<O>(&self, f: impl AsyncFn(&Self::Data) -> O) -> O {
+        unimplemented!()
     }
 }

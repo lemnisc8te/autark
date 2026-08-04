@@ -3,7 +3,6 @@ use crate::{
         manager::{
             Handle,
             asset::{AssetActor, commands::WaitForAudioAsset},
-            project::ProjectActor,
         },
         tick::Tick,
     },
@@ -36,7 +35,7 @@ pub struct AudioClip {
 
 impl Stored for AudioClip {
     type ID = AudioClipID;
-    type Actor = ProjectActor;
+    type Location = ProjectData;
     type Storage = Self;
 
     fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {

@@ -1,25 +1,36 @@
-use std::collections::HashMap;
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashMap, HashSet},
+};
 
 use crate::{
     engine::{
-        CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError,
-        manager::project::ProjectActor, tick::Tick,
+        CompiledGraph, ScheduleStep, SlotIndex,
+        constants::{MAX_BUFFER_SLOTS, MAX_NODES},
+        errors::EngineError,
+        manager::{Handle, asset::AssetActor},
+        state::GraphUpdate,
+        tick::Tick,
     },
     model::{
-        DataKind, Kind, Stored,
+        Audio, DataKind, Kind, Stored,
         arr::{
-            clip::{AudioClip, AudioClipID, Clip},
+            clip::{AudioClip, AudioClipID, Clip, ResolvedAudioClip},
             track::{AudioTrack, AudioTrackID, Track},
         },
         flow::{
             Node, NodeID,
             graph::NodeGraph,
-            nodes::{master::Master, trackreader::TrackReader},
+            nodes::{
+                master::Master,
+                trackreader::{TrackReader, TrackReaderState},
+            },
             socket::{InputSocketID, OutputSocketID, Socket, SocketMeta},
         },
     },
 };
 use anyhow::Result;
+use futures::future::join_all;
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
@@ -28,6 +39,13 @@ pub struct ProjectData {
     pub clips: SlotMap<AudioClipID, AudioClip>,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
+}
+
+pub struct ProjectMetaData {
+    pub(crate) current: ProjectData,
+    pub(crate) undo_stack: Vec<ProjectData>,
+    pub(crate) redo_stack: Vec<ProjectData>,
+    pub(crate) known_node_ids: HashSet<NodeID>,
 }
 
 impl ProjectData {
@@ -64,8 +82,8 @@ impl ProjectData {
     ) -> Result<()>
     where
         K: Kind,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Location = ProjectData>,
+        K::Clip: Stored<Location = ProjectData>,
     {
         let track = K::Track::access_mut(self)
             .get_mut(track)
@@ -87,8 +105,8 @@ impl ProjectData {
     ) -> Result<<K::Clip as Stored>::ID>
     where
         K: Kind,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Location = ProjectData>,
+        K::Clip: Stored<Location = ProjectData>,
     {
         let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
         let track = K::Track::access_mut(self)
@@ -105,14 +123,33 @@ impl ProjectData {
     ) -> (<K::Track as Stored>::ID, NodeID)
     where
         TrackReader<K>: Node,
-        K::Track: Stored<Actor = ProjectActor>,
-        K::Clip: Stored<Actor = ProjectActor>,
+        K::Track: Stored<Location = ProjectData>,
+        K::Clip: Stored<Location = ProjectData>,
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
         let reader_node = TrackReader::<K>::new(track_id, channels);
         let node_id = self.graph.add_node(reader_node);
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
         (track_id, node_id)
+    }
+
+    pub fn remove_track<K>(&mut self, track_id: <K::Track as Stored>::ID) -> Result<()>
+    where
+        K: Kind,
+        K::Track: Stored<Location = ProjectData>,
+        K::Clip: Stored<Location = ProjectData>,
+    {
+        let track = <K as Kind>::Track::access_mut(self)
+            .remove(track_id)
+            .ok_or(EngineError::TrackNotFound)?;
+        let linked_id = track
+            .linked_node_id()
+            .expect("Track was orphaned from node");
+        self.graph.purge(linked_id);
+        for clip_id in track.clips().values() {
+            <K as Kind>::Clip::access_mut(self).remove(*clip_id);
+        }
+        Ok(())
     }
 
     pub fn add_input_socket_to_node(
@@ -212,4 +249,154 @@ impl Default for ProjectData {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl ProjectMetaData {
+    pub fn new(current: ProjectData) -> Self {
+        Self {
+            current,
+            undo_stack: vec![],
+            redo_stack: vec![],
+            known_node_ids: HashSet::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn project(&self) -> &ProjectData {
+        &self.current
+    }
+
+    pub const fn project_mut(&mut self) -> &mut ProjectData {
+        &mut self.current
+    }
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack
+                .push(std::mem::replace(&mut self.current, prev));
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack
+                .push(std::mem::replace(&mut self.current, next));
+        }
+    }
+
+    pub fn commit(&mut self, next: ProjectData) {
+        let previous_commit = std::mem::replace(&mut self.current, next);
+        self.undo_stack.push(previous_commit);
+        self.redo_stack.clear();
+    }
+
+    /// Builds the next `GraphUpdate`
+    pub async fn publish_current(
+        &mut self,
+        asset_h: &Handle<AssetActor>,
+        filter: Option<&[NodeID]>,
+    ) -> Result<GraphUpdate> {
+        let schedule = self
+            .project()
+            .compile_graph(filter, self.current.master_node_id)?;
+
+        if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
+        {
+            // In a real UI this would surface as a rejected edit before
+            // getting here (validate in Command::execute); this is the
+            // last-resort backstop.
+            anyhow::bail!("graph exceeds preallocated real-time budget; edit ignored")
+        }
+
+        let old_ids: HashSet<NodeID> = self.known_node_ids.clone();
+        let new_ids: HashSet<NodeID> = self.project().graph.nodes.keys().collect();
+
+        let state_additions = new_ids
+            .difference(&old_ids)
+            .map(|&id| self.create_node_state(asset_h, id));
+        let state_additions = join_all(state_additions).await;
+        let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
+
+        let _ = std::mem::replace(&mut self.known_node_ids, new_ids);
+        Ok(GraphUpdate {
+            schedule,
+            state_additions,
+            state_removals,
+        })
+    }
+
+    async fn create_node_state(
+        &self,
+        asset_h: &Handle<AssetActor>,
+        node_id: NodeID,
+    ) -> (NodeID, Box<dyn Any + Send>) {
+        let node = self.project().graph.nodes[node_id].clone();
+        if let Some(n) = node.as_any().downcast_ref::<TrackReader<Audio>>() {
+            let track_id = n.id;
+            let mut the_clips: BTreeMap<Tick, ResolvedAudioClip> = BTreeMap::new();
+            for (tick, clipid) in &self.project().tracks[track_id].clips {
+                let the_clip = self.project().clips[*clipid];
+                let resolved = ResolvedAudioClip::from_clip(the_clip, asset_h.clone())
+                    .await
+                    .unwrap();
+                the_clips.insert(*tick, resolved);
+            }
+            (
+                node_id,
+                Box::new(TrackReaderState { clips: the_clips }) as Box<dyn Any + Send>,
+            )
+        } else {
+            (node_id, self.project().graph.nodes[node_id].spawn_state())
+        }
+    }
+
+    // pub fn bounce_range(
+    //     &self,
+    //     asset_h: &Handle<AssetActor>,
+    //     target: NodeID,
+    //     range: Range<Tick>,
+    //     block_size: usize,
+    // ) -> Result<Vec<f32>> {
+    //     use crate::engine::{
+    //         manager::audio::AudioActor,
+    //         state::{Garbage, NodeStatePool},
+    //         util::abp::AudioBufferPool,
+    //     };
+    //     let ancestors: Vec<NodeID> = self
+    //         .project()
+    //         .graph
+    //         .ancestors_of(target)
+    //         .into_iter()
+    //         .collect();
+    //     let schedule = self.project().compile_graph(Some(&ancestors), target)?;
+
+    //     let mut pool = AudioBufferPool::new(schedule.buffer_count, block_size);
+    //     let mut state_pool = NodeStatePool::new();
+    //     let (mut garbage_tx, _rx) = rtrb::RingBuffer::<Garbage>::new(1); // discarded, offline
+
+    //     let state_addititions = ancestors
+    //         .iter()
+    //         .map(|&id| self.create_node_state(asset_h, id))
+    //         .collect();
+    //     let mut update = GraphUpdate {
+    //         state_additions: ancestors
+    //             .iter()
+    //             .map(|&id| self.create_node_state(asset_h, id))
+    //             .collect(),
+    //         schedule,
+    //         state_removals: vec![],
+    //     };
+    //     state_pool.apply(&mut update, &mut garbage_tx);
+
+    //     let frames = usize::try_from((range.end - range.start).0)?;
+    //     let mut out = Vec::with_capacity(frames);
+    //     let mut cursor = range.start;
+    //     while (cursor - range.start).0 < frames as u64 {
+    //         let mixed =
+    //             AudioActor::execute_block(&update.schedule, cursor, &mut pool, &mut state_pool);
+    //         out.extend_from_slice(mixed);
+    //         cursor = cursor + Tick(block_size as u64);
+    //     }
+    //     out.truncate(frames);
+    //     Ok(out)
+    // }
 }

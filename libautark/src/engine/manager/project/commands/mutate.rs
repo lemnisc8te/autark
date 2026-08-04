@@ -1,18 +1,16 @@
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use std::marker::PhantomData;
 
 use crate::{
     engine::{
         manager::{
-            Command, Modify,
+            Command, Operate,
             project::{ProjectActor, commands::ProjectCommand},
         },
         tick::Tick,
     },
     model::{
         Kind, Stored,
-        arr::track::Track,
         flow::{
             Node, NodeID,
             nodes::trackreader::TrackReader,
@@ -30,18 +28,19 @@ pub struct AddTrack<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddTrack<K> {}
 
-#[async_trait]
-impl<K: Kind> Command<Modify> for AddTrack<K>
+impl<K: Kind> Command for AddTrack<K>
 where
     TrackReader<K>: Node,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Location = ProjectData>,
+    K::Clip: Stored<Location = ProjectData>,
 {
     type Output = (<K::Track as Stored>::ID, NodeID);
     type Actor = ProjectActor;
 
-    async fn execute(self, project: &mut ProjectData) -> Self::Output {
-        project.add_track::<K>(self.name, self.channels)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| proj.current.add_track::<K>(self.name, self.channels))
+            .await
     }
 }
 
@@ -49,37 +48,26 @@ pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::ID);
 
 impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for RemoveTrack<K>
+impl<K> Command for RemoveTrack<K>
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Location = ProjectData>,
+    K::Clip: Stored<Location = ProjectData>,
 {
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
         {
-            let this = &mut *actor;
-            let track_id = self.0;
-            let track = <K as Kind>::Track::access_mut(this)
-                .remove(track_id)
-                .ok_or(crate::engine::errors::EngineError::TrackNotFound)?;
-            let linked_id = track
-                .linked_node_id()
-                .expect("Track was orphaned from node");
-            this.graph.purge(linked_id);
-            for clip_id in track.clips().values() {
-                <K as Kind>::Clip::access_mut(this).remove(*clip_id);
-            }
-            Ok(())
+            actor
+                .mutate(async |proj| proj.current.remove_track::<K>(self.0))
+                .await
         }
     }
 }
 
 pub struct AddClip<K: Kind> {
-    pub track: <K::Track as Stored>::ID,
+    pub track_id: <K::Track as Stored>::ID,
     pub start: Tick,
     pub end: Tick,
     pub asset_id: <K::Asset as Stored>::ID,
@@ -87,18 +75,26 @@ pub struct AddClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for AddClip<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for AddClip<K>
+impl<K> Command for AddClip<K>
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Location = ProjectData>,
+    K::Clip: Stored<Location = ProjectData>,
 {
     type Output = Result<<K::Clip as Stored>::ID>;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| {
+                proj.current.add_clip_to_track::<K>(
+                    self.track_id,
+                    self.start,
+                    self.end,
+                    self.asset_id,
+                )
+            })
+            .await
     }
 }
 
@@ -110,18 +106,22 @@ pub struct MoveClip<K: Kind> {
 
 impl<K: Kind> ProjectCommand for MoveClip<K> {}
 
-#[async_trait]
-impl<K> Command<Modify> for MoveClip<K>
+impl<K> Command for MoveClip<K>
 where
     K: Kind,
-    K::Track: Stored<Actor = ProjectActor>,
-    K::Clip: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Location = ProjectData>,
+    K::Clip: Stored<Location = ProjectData>,
 {
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.move_clip::<K>(self.track, self.clip, self.new_start)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| {
+                proj.current
+                    .move_clip::<K>(self.track, self.clip, self.new_start)
+            })
+            .await
     }
 }
 
@@ -131,13 +131,15 @@ pub struct AddNode<N: Node> {
 
 impl<N: Node> ProjectCommand for AddNode<N> {}
 
-#[async_trait]
-impl<N: Node> Command<Modify> for AddNode<N> {
+// #[async_trait]
+impl<N: Node> Command for AddNode<N> {
     type Output = NodeID;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.graph.add_node(self.node)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| proj.current.graph.add_node(self.node))
+            .await
     }
 }
 
@@ -148,13 +150,14 @@ pub struct AddLink {
 
 impl ProjectCommand for AddLink {}
 
-#[async_trait]
-impl Command<Modify> for AddLink {
+impl Command for AddLink {
     type Output = Result<Option<OutputSocketID>>;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_link(self.from, self.to)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| proj.current.add_link(self.from, self.to))
+            .await
     }
 }
 
@@ -165,12 +168,13 @@ pub struct RemoveLink {
 
 impl ProjectCommand for RemoveLink {}
 
-#[async_trait]
-impl Command<Modify> for RemoveLink {
+impl Command for RemoveLink {
     type Output = Result<()>;
     type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.remove_link(self.from, self.to)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| proj.current.remove_link(self.from, self.to))
+            .await
     }
 }
 
@@ -190,13 +194,18 @@ impl<K: Kind> AddNodeInput<K> {
         }
     }
 }
-
-#[async_trait]
-impl<K: Kind> Command<Modify> for AddNodeInput<K> {
+impl<K: Kind> Command for AddNodeInput<K> {
     type Output = Result<InputSocketID>; // index of the newly created socket
     type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.add_input_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| {
+                proj.current.add_input_socket_to_node(
+                    self.node_id,
+                    Socket::new(K::into_datakind(), "in", true),
+                )
+            })
+            .await
     }
 }
 
@@ -206,12 +215,13 @@ pub struct RemoveNodeInput {
 
 impl ProjectCommand for RemoveNodeInput {}
 
-#[async_trait]
-impl Command<Modify> for RemoveNodeInput {
+impl Command for RemoveNodeInput {
     type Output = Result<()>;
     type Actor = ProjectActor;
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        actor.remove_node_input(self.node_id)
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| proj.current.remove_node_input(self.node_id))
+            .await
     }
 }
 
@@ -235,21 +245,24 @@ where
 {
 }
 
-#[async_trait]
-impl<K, F, T> Command<Modify> for MutateTrack<K, F, T>
+impl<K, F, T> Command for MutateTrack<K, F, T>
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
     T: Send + 'static,
-    K::Track: Stored<Actor = ProjectActor>,
+    K::Track: Stored<Location = <ProjectActor as Operate>::Data>,
 {
     type Output = Result<T>;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &mut ProjectData) -> Self::Output {
-        let the_ref = K::Track::access_mut(actor)
-            .get_mut(self.id)
-            .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
-        Ok((self.func)(the_ref))
+    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+        actor
+            .mutate(async |proj| {
+                let the_ref = K::Track::access_mut(proj)
+                    .get_mut(self.id)
+                    .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
+                Ok((self.func)(the_ref))
+            })
+            .await
     }
 }

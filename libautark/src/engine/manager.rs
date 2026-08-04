@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::marker::PhantomData;
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{marker::PhantomData, sync::Arc};
+use tokio::sync::oneshot;
 
 pub mod asset;
 pub mod audio;
@@ -14,144 +14,40 @@ pub enum PriorityLevel {
     High = 2,     // IO Completion notifications & Lifecycle events
 }
 
-#[async_trait]
-pub trait Actor: HasHandle<Self> + Send + Sized + 'static {
-    type InitParams;
-    type Data;
+// #[async_trait]
+pub trait Actor: Sync + Send + Sized + 'static {
+    type InitParams: Send;
     type Envelope: Envelope<Self>;
     type Carrier: Carrier<Self>;
     fn new(params: Self::InitParams, loopback: Handle<Self>) -> Self;
 
     /// Run once before the first command is processed.
-    fn on_start(&mut self) {}
+    fn on_start(&self) {}
 
     /// Run once after the mailbox closes and no more commands will come.
-    fn on_stop(&mut self) {}
-
-    fn pre_mutate(&mut self) {}
-
-    fn data(&self) -> &Self::Data;
-
-    fn data_mut(&mut self) -> &mut Self::Data;
+    fn on_stop(&self) {}
 }
 
-pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
+pub trait Operate: Actor {
+    type Data: Send;
+    async fn mutate<O>(&self, f: impl AsyncFnOnce(&mut Self::Data) -> O) -> O;
+    async fn query<O>(&self, f: impl AsyncFn(&Self::Data) -> O) -> O;
+}
+
+pub trait MultiThreadActor: Actor + Sync {}
+
+pub trait IntoEnvelope: Command {
     fn into_envelope<R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
     where
         R: ReplyPort<Self::Output> + 'static;
 }
 
-pub struct Query;
-pub struct Modify;
-pub struct MetaQuery;
-pub struct MetaMutate;
+// #[async_trait]
+pub trait Command: Send + 'static {
+    type Output: Send + 'static;
+    type Actor: Actor + Operate;
 
-pub trait MutatePermission<A: Actor>: Permission<A> {}
-pub trait RefPermission<A: Actor>: Permission<A> {}
-
-impl<A: Actor> RefPermission<A> for Query {}
-impl<A: Actor> RefPermission<A> for MetaQuery {}
-
-impl<A: Actor> MutatePermission<A> for Modify {}
-impl<A: Actor> MutatePermission<A> for MetaMutate {}
-
-pub trait Permission<A: Actor>: Send + 'static {
-    type In<'r>;
-    type Type<'r>;
-
-    /// Narrows the actor-thread's exclusive `&mut A` down to whatever
-    /// this permission is allowed to see (`&A` for `Ref`/`ActorRef`,
-    /// `&mut A` for `Mutate`).
-    fn reborrow(actor: &mut A) -> Self::In<'_>;
-
-    /// Runs once per envelope, before `data`/`execute`. No-op for `Ref`;
-    /// `Mutate`/`ActorRef` use it to commit the pre-mutation undo entry.
-    fn pre_hook(_actor: &mut A) {}
-
-    fn data(self_ref: Self::In<'_>) -> Self::Type<'_>;
-}
-
-impl<A: Actor> Permission<A> for Query {
-    type In<'r> = &'r A;
-    type Type<'r> = &'r A::Data;
-
-    fn reborrow(actor: &mut A) -> Self::In<'_> {
-        &*actor
-    }
-
-    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
-        self_ref.data()
-    }
-}
-impl<A: Actor> Permission<A> for Modify {
-    type In<'r> = &'r mut A;
-    type Type<'r> = &'r mut A::Data;
-
-    fn reborrow(actor: &mut A) -> Self::In<'_> {
-        actor
-    }
-
-    fn pre_hook(actor: &mut A) {
-        actor.pre_mutate();
-    }
-
-    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
-        self_ref.data_mut()
-    }
-}
-
-impl<A: Actor> Permission<A> for MetaQuery {
-    type In<'r> = &'r A;
-    type Type<'r> = &'r A;
-
-    fn reborrow(actor: &mut A) -> Self::In<'_> {
-        actor
-    }
-
-    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
-        self_ref
-    }
-}
-
-impl<A: Actor> Permission<A> for MetaMutate {
-    type In<'r> = &'r mut A;
-    type Type<'r> = &'r mut A;
-
-    fn reborrow(actor: &mut A) -> Self::In<'_> {
-        actor
-    }
-
-    fn pre_hook(actor: &mut A) {
-        actor.pre_mutate();
-    }
-
-    fn data(self_ref: Self::In<'_>) -> Self::Type<'_> {
-        self_ref
-    }
-}
-
-#[async_trait]
-pub trait Request<P: Permission<Self::Actor>>: Send + 'static {
-    type Output: Send;
-    type Actor: Actor;
-
-    async fn execute(self, actor: Handle<Self::Actor>) -> Self::Output;
-
-    fn priority() -> PriorityLevel {
-        PriorityLevel::Standard
-    }
-}
-
-#[async_trait]
-pub trait Command<P: Permission<Self::Actor>>: Send + 'static {
-    type Output: Send;
-    type Actor: Actor;
-
-    async fn execute(self, actor: <P as Permission<Self::Actor>>::Type<'_>) -> Self::Output;
-
-    fn priority() -> PriorityLevel {
-        PriorityLevel::Standard
-    }
+    async fn execute(self, actor: &Self::Actor) -> Self::Output;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -183,39 +79,32 @@ impl<O: Send> ReplyPort<O> for NoReply {
 
 #[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    async fn engage(self: Box<Self>, handle: &mut A);
-    fn priority(&self) -> PriorityLevel;
+    async fn engage(self: Box<Self>, handle: &A);
 }
 
 pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
 #[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn engage(self: Box<Self>, handle: &mut A) {
+    async fn engage(self: Box<Self>, handle: &A) {
         (*self).engage(handle).await;
-    }
-
-    fn priority(&self) -> PriorityLevel {
-        (**self).priority()
     }
 }
 
-struct StdEnvelope<A, P, C, R>
+struct StdEnvelope<A, C, R>
 where
-    P: Permission<C::Actor>,
-    C: Command<P>,
+    C: Command,
     R: ReplyPort<C::Output>,
     A: Actor,
 {
     command: C,
     reply: R,
-    _actor: PhantomData<fn(P) -> A>,
+    _actor: PhantomData<fn() -> A>,
 }
 
-impl<C, P> IntoEnvelope<P> for C
+impl<C> IntoEnvelope for C
 where
-    P: Permission<C::Actor>,
-    C: Command<P>,
+    C: Command,
     C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
 {
     fn into_envelope<R>(self, reply: R) -> <C::Actor as Actor>::Envelope
@@ -231,20 +120,15 @@ where
 }
 
 #[async_trait]
-impl<A: Actor, P: Permission<A>, C, R> Envelope<A> for StdEnvelope<A, P, C, R>
+impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, C, R>
 where
-    C: Command<P, Actor = A>,
+    C: Command<Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    async fn engage(self: Box<Self>, handle: &mut A) {
+    async fn engage(self: Box<Self>, actor: &A) {
         let Self { command, reply, .. } = *self;
-        P::pre_hook(handle);
-        let input = P::reborrow(handle);
-        let output = command.execute(P::data(input)).await;
+        let output = command.execute(actor).await;
         reply.send(output);
-    }
-    fn priority(&self) -> PriorityLevel {
-        C::priority()
     }
 }
 
@@ -279,26 +163,22 @@ pub struct StdCarrier<A: Actor> {
 
 #[async_trait]
 impl<A: Actor> Carrier<A> for StdCarrier<A> {
-    // type Sender = flume::Sender<<A as Actor>::Envelope>;
-    // type Receiver = flume::Receiver<<A as Actor>::Envelope>;
-    type Sender = async_priority_channel::Sender<<A as Actor>::Envelope, PriorityLevel>;
-    type Receiver = async_priority_channel::Receiver<<A as Actor>::Envelope, PriorityLevel>;
+    type Sender = flume::Sender<<A as Actor>::Envelope>;
+    type Receiver = flume::Receiver<<A as Actor>::Envelope>;
+    // type Sender = async_priority_channel::Sender<<A as Actor>::Envelope, PriorityLevel>;
+    // type Receiver = async_priority_channel::Receiver<<A as Actor>::Envelope, PriorityLevel>;
 
     fn pair(capacity: usize) -> (Self::Sender, Self::Receiver) {
-        async_priority_channel::bounded(capacity as u64)
+        flume::bounded(capacity)
     }
 
     async fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
-        let priority = envelope.priority();
-        sender
-            .send(envelope, priority)
-            .await
-            .expect("Failed to send");
+        sender.send_async(envelope).await.expect("Failed to send");
         Ok(())
     }
 
     async fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
-        Ok(receiver.recv().await?.0)
+        Ok(receiver.recv_async().await?)
     }
 }
 
@@ -326,10 +206,9 @@ impl<A: Actor> Clone for Handle<A> {
 }
 
 impl<A: Actor> Handle<A> {
-    async fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
+    async fn send_envelope<C, R>(&self, command: C, reply: R) -> Result<()>
     where
-        P: Permission<A>,
-        C: IntoEnvelope<P, Actor = A>,
+        C: IntoEnvelope<Actor = A>,
         R: ReplyPort<C::Output> + 'static,
     {
         let envelope = command.into_envelope::<_>(reply);
@@ -337,10 +216,9 @@ impl<A: Actor> Handle<A> {
     }
 
     /// Run a read-only `Command` and await its result.
-    pub async fn call<C, RP>(&self, command: C) -> C::Output
+    pub async fn call<C>(&self, command: C) -> C::Output
     where
-        RP: RefPermission<A>,
-        C: IntoEnvelope<RP, Actor = A>,
+        C: IntoEnvelope<Actor = A>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx)).await.ok();
@@ -350,31 +228,9 @@ impl<A: Actor> Handle<A> {
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
-    pub async fn notify<C, RP>(&self, command: C) -> Result<()>
+    pub async fn notify<C>(&self, command: C) -> Result<()>
     where
-        RP: RefPermission<A>,
-        C: IntoEnvelope<RP, Actor = A>,
-    {
-        self.send_envelope(command, NoReply).await
-    }
-
-    /// Run a `MutatingCommand` and await its result.
-    pub async fn call_mut<C, MP>(&self, command: C) -> C::Output
-    where
-        MP: MutatePermission<A>,
-        C: IntoEnvelope<MP, Actor = A>,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.send_envelope(command, Reply(tx)).await.ok();
-        rx.await.unwrap()
-    }
-
-    /// Enqueue a `MutatingCommand` without waiting for its result
-    /// ("cast" in classic actor-model terms — fire and forget).
-    pub async fn fire_mut<C, MP>(&self, command: C) -> Result<()>
-    where
-        MP: MutatePermission<A>,
-        C: IntoEnvelope<MP, Actor = A>,
+        C: IntoEnvelope<Actor = A>,
     {
         self.send_envelope(command, NoReply).await
     }
@@ -388,7 +244,7 @@ pub trait Manager<A: Actor> {
     /// Spawn `actor` onto its own tokio task. Returns a cloneable
     /// `Handle` for sending it commands, and a `JoinHandle` that
     /// resolves to the actor's final state once its mailbox closes.
-    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A>, JoinHandle<A>);
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> Handle<A>;
 }
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
@@ -399,34 +255,64 @@ impl<A> Manager<A> for StdManager<A>
 where
     A: Actor,
 {
-    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> (Handle<A>, JoinHandle<A>) {
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> Handle<A> {
         let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
         let handle = Handle { sender };
         let loopback = handle.clone();
-        let mut actor = A::new(params, loopback.clone());
+        let actor = A::new(params, loopback.clone());
 
         let joiner = tokio::spawn(async move {
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                Box::new(envelope).engage(&mut actor).await;
+                Box::new(envelope).engage(&actor).await;
             }
 
             actor.on_stop();
             actor
         });
 
-        (handle, joiner)
+        handle
     }
 }
 
 /// Free-function helper so call sites can pick `A` and `M` explicitly
 /// without needing fully-qualified trait syntax at every call site.
-pub fn spawn_actor<A, M>(
-    params: A::InitParams,
-    mailbox_capacity: usize,
-) -> (Handle<A>, JoinHandle<A>)
+pub fn spawn_actor<A, M>(params: A::InitParams, mailbox_capacity: usize) -> Handle<A>
 where
     A: Actor,
     M: Manager<A>,
 {
     M::spawn(params, mailbox_capacity)
+}
+
+/// The stock `Manager`: runs the actor loop directly on the tokio
+/// runtime, using whichever `Transport` is specified.
+pub struct MultithreadManager<A: Actor>(PhantomData<A>);
+
+impl<A> Manager<A> for MultithreadManager<A>
+where
+    A: MultiThreadActor,
+{
+    fn spawn(params: A::InitParams, mailbox_capacity: usize) -> Handle<A> {
+        let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
+        let handle = Handle { sender };
+        let loopback = handle.clone();
+
+        let joiner = tokio::spawn(async move {
+            let actor = Arc::new(A::new(params, loopback.clone()));
+
+            while let Ok(envelope) = A::Carrier::recv(&receiver).await {
+                let actor_clone = Arc::clone(&actor);
+
+                // Spawn a task to handle the individual message safely
+                tokio::spawn(async move {
+                    Box::new(envelope).engage(&actor_clone).await;
+                });
+            }
+
+            actor.on_stop();
+        });
+        drop(joiner);
+
+        handle
+    }
 }

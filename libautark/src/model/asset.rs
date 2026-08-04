@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
-    engine::manager::asset::{AssetActor, AssetRegistry, AudioAssetSlot},
+    engine::manager::asset::{AssetRegistry, AudioAssetSlot},
     model::{Audio, Kind, Stored},
 };
 
@@ -40,14 +40,14 @@ pub enum AudioAssetPayload {
 
 impl Stored for AudioAsset {
     type ID = AudioAssetID;
-    type Actor = AssetActor;
+    type Location = AssetRegistry;
     type Storage = AudioAssetSlot;
 
-    fn access(loc: &AssetRegistry) -> &slotmap::SlotMap<Self::ID, Self::Storage> {
+    fn access(loc: &Self::Location) -> &slotmap::SlotMap<Self::ID, Self::Storage> {
         &loc.audio
     }
 
-    fn access_mut(loc: &mut AssetRegistry) -> &mut slotmap::SlotMap<Self::ID, Self::Storage> {
+    fn access_mut(loc: &mut Self::Location) -> &mut slotmap::SlotMap<Self::ID, Self::Storage> {
         &mut loc.audio
     }
 }
