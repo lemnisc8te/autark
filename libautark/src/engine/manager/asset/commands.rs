@@ -1,6 +1,6 @@
 use super::AssetActor;
 use anyhow::Result;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use tokio::sync::watch;
 
 use crate::{
@@ -13,13 +13,12 @@ use crate::{
 
 pub struct SubscribeAudioAsset(pub AudioAssetID);
 
-// #[async_trait]
 impl Command for SubscribeAudioAsset {
     type Output = watch::Receiver<AssetData<AudioAsset>>;
 
     type Actor = AssetActor;
 
-    fn execute(self, actor: Arc<AssetActor>) -> impl Future<Output = Self::Output> + Send {
+    fn execute(self, actor: &AssetActor) -> impl Future<Output = Self::Output> + Send {
         dbg!("subscribing");
         actor.query(async move |reg| reg.audio.get(self.0).unwrap().watch.subscribe())
     }
@@ -32,8 +31,8 @@ impl Command for WaitForAudioAsset {
 
     type Actor = AssetActor;
 
-    fn execute(self, actor: Arc<Self::Actor>) -> impl Future<Output = Self::Output> {
-        actor.query(async |reg| {
+    fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> {
+        actor.query(async move |reg| {
             let mut rx = reg.audio.get(self.0).unwrap().watch.subscribe();
             dbg!("waiting");
             rx.wait_for(|data| match data {

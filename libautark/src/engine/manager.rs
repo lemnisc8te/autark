@@ -44,7 +44,7 @@ pub trait Command: Send + 'static {
     type Output: Send + 'static;
     type Actor: Actor + Operate;
 
-    fn execute(self, actor: Arc<Self::Actor>) -> impl Future<Output = Self::Output> + Send;
+    fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> + Send;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -124,7 +124,7 @@ where
 {
     async fn engage(self: Box<Self>, actor: Arc<A>) {
         let Self { command, reply, .. } = *self;
-        let output = command.execute(actor).await;
+        let output = command.execute(&actor).await;
         reply.send(output);
     }
 }

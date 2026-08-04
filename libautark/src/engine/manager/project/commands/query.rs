@@ -33,7 +33,7 @@ impl Command for InputSocketOf {
     type Actor = ProjectActor;
 
     fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> {
-        actor.query(async |proj| proj.current.graph.inputs_of(self.0)[self.1])
+        actor.query(async move |proj| proj.current.graph.inputs_of(self.0)[self.1])
     }
 }
 
@@ -48,7 +48,7 @@ impl Command for OutputSocketOf {
 
     async fn execute(self, actor: &Self::Actor) -> Self::Output {
         actor
-            .query(async |proj| proj.current.graph.outputs_of(self.0)[self.1])
+            .query(async move |proj| proj.current.graph.outputs_of(self.0)[self.1])
             .await
     }
 }

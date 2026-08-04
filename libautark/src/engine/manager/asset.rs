@@ -48,7 +48,6 @@ where
 
 #[derive(Debug, Clone)]
 pub struct AudioAssetSlot {
-    // pub data: AssetData<K::Asset>,
     pub watch: watch::Sender<AssetData<AudioAsset>>,
 }
 
