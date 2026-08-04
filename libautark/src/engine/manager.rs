@@ -15,7 +15,7 @@ pub enum PriorityLevel {
 }
 
 // #[async_trait]
-pub trait Actor: Sync + Send + Sized + 'static {
+pub trait Actor: Send + Sync + Sized + 'static {
     type InitParams: Send;
     type Envelope: Envelope<Self>;
     type Carrier: Carrier<Self>;
@@ -34,20 +34,17 @@ pub trait Operate: Actor {
     async fn query<O>(&self, f: impl AsyncFn(&Self::Data) -> O) -> O;
 }
 
-pub trait MultiThreadActor: Actor + Sync {}
-
 pub trait IntoEnvelope: Command {
     fn into_envelope<R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
     where
         R: ReplyPort<Self::Output> + 'static;
 }
 
-// #[async_trait]
 pub trait Command: Send + 'static {
     type Output: Send + 'static;
     type Actor: Actor + Operate;
 
-    async fn execute(self, actor: &Self::Actor) -> Self::Output;
+    fn execute(self, actor: Arc<Self::Actor>) -> impl Future<Output = Self::Output> + Send;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -79,14 +76,14 @@ impl<O: Send> ReplyPort<O> for NoReply {
 
 #[async_trait]
 pub trait Envelope<A: Actor>: Send {
-    async fn engage(self: Box<Self>, handle: &A);
+    async fn engage(self: Box<Self>, handle: Arc<A>);
 }
 
 pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
 
 #[async_trait]
 impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn engage(self: Box<Self>, handle: &A) {
+    async fn engage(self: Box<Self>, handle: Arc<A>) {
         (*self).engage(handle).await;
     }
 }
@@ -125,7 +122,7 @@ where
     C: Command<Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    async fn engage(self: Box<Self>, actor: &A) {
+    async fn engage(self: Box<Self>, actor: Arc<A>) {
         let Self { command, reply, .. } = *self;
         let output = command.execute(actor).await;
         reply.send(output);
@@ -262,8 +259,9 @@ where
         let actor = A::new(params, loopback.clone());
 
         let joiner = tokio::spawn(async move {
+            let actor = Arc::new(actor);
             while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                Box::new(envelope).engage(&actor).await;
+                Box::new(envelope).engage(actor.clone()).await;
             }
 
             actor.on_stop();
@@ -290,7 +288,7 @@ pub struct MultithreadManager<A: Actor>(PhantomData<A>);
 
 impl<A> Manager<A> for MultithreadManager<A>
 where
-    A: MultiThreadActor,
+    A: Actor,
 {
     fn spawn(params: A::InitParams, mailbox_capacity: usize) -> Handle<A> {
         let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
@@ -305,7 +303,7 @@ where
 
                 // Spawn a task to handle the individual message safely
                 tokio::spawn(async move {
-                    Box::new(envelope).engage(&actor_clone).await;
+                    Box::new(envelope).engage(actor_clone).await;
                 });
             }
 

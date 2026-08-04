@@ -33,7 +33,7 @@ pub struct SyncProducer<T>(pub rtrb::Producer<T>);
 unsafe impl<T: Send> Sync for SyncProducer<T> {}
 
 pub struct AudioActor {
-    update_tx: Arc<RwLock<SyncProducer<GraphUpdate>>>,
+    update_tx: RwLock<SyncProducer<GraphUpdate>>,
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
     loopback: Handle<Self>,
@@ -70,7 +70,7 @@ impl AudioActor {
         stream.play()?; // device stream runs continuously; transport gates output
         Ok(Self {
             transport,
-            update_tx: Arc::new(SyncProducer(update_tx).into()),
+            update_tx: SyncProducer(update_tx).into(),
             _stream: stream,
             loopback,
         })

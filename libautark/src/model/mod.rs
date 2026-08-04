@@ -96,7 +96,7 @@ pub trait Location {
 }
 
 pub trait Stored: Sized {
-    type ID: Key + Serialize + DeserializeOwned + Send + 'static;
+    type ID: Key + Serialize + DeserializeOwned + Send + Sync + 'static;
     type Location;
     type Storage;
 

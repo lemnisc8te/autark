@@ -6,10 +6,8 @@ use tokio::sync::RwLock;
 
 use crate::engine::manager::Actor;
 
-use std::sync::Arc;
-
 pub struct ProjectActor {
-    pub data: Arc<RwLock<ProjectMetaData>>,
+    pub data: RwLock<ProjectMetaData>,
     loopback: Handle<Self>,
 }
 
@@ -28,7 +26,7 @@ impl Actor for ProjectActor {
 
     fn new(current: Self::InitParams, loopback: Handle<Self>) -> Self {
         Self {
-            data: Arc::new(ProjectMetaData::new(current).into()),
+            data: ProjectMetaData::new(current).into(),
             loopback,
         }
     }

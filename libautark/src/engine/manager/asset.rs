@@ -201,7 +201,7 @@ impl AssetRegistry {
 }
 
 pub struct AssetActor {
-    reg: Arc<RwLock<AssetRegistry>>,
+    reg: RwLock<AssetRegistry>,
     loopback: Handle<Self>,
 }
 
@@ -224,7 +224,7 @@ impl Actor for AssetActor {
 
     fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
         Self {
-            reg: Arc::new(AssetRegistry::new().into()),
+            reg: AssetRegistry::new().into(),
             loopback,
         }
     }

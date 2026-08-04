@@ -4,8 +4,8 @@ use slotmap::new_key_type;
 use crate::model::{DataKind, flow::NodeID};
 
 new_key_type! {
-pub struct InputSocketID;
-pub struct OutputSocketID;
+    pub struct InputSocketID;
+    pub struct OutputSocketID;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

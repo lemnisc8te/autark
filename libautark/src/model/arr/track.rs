@@ -5,7 +5,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{Audio, Kind, Stored, arr::clip::AudioClipID, flow::NodeID, project::ProjectMetaData},
+    model::{Audio, Kind, Stored, arr::clip::AudioClipID, flow::NodeID, project::ProjectData},
 };
 
 new_key_type! {
@@ -38,15 +38,15 @@ pub struct AudioTrack {
 
 impl Stored for AudioTrack {
     type ID = AudioTrackID;
-    type Location = ProjectMetaData;
+    type Location = ProjectData;
     type Storage = Self;
 
-    fn access(loc: &ProjectMetaData) -> &slotmap::SlotMap<Self::ID, Self> {
-        &loc.current.tracks
+    fn access(loc: &ProjectData) -> &slotmap::SlotMap<Self::ID, Self> {
+        &loc.tracks
     }
 
-    fn access_mut(loc: &mut ProjectMetaData) -> &mut slotmap::SlotMap<Self::ID, Self> {
-        &mut loc.current.tracks
+    fn access_mut(loc: &mut ProjectData) -> &mut slotmap::SlotMap<Self::ID, Self> {
+        &mut loc.tracks
     }
 }
 
