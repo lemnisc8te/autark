@@ -1,7 +1,15 @@
+//! Autark is an experimental audio tool designed to create interesting and beautiful sounds
+//!
+//! [`libautark`] is the library that provides backend functionality. It uses a [`Command`]-based API to interface with an [`Engine`].
+//! This API offers great flexibilty, including the ability to use `libautark` programmatically, within a UI, or something else entirely!
+//!
+//! The library is roughly split into two parts:
+//! - [`engine`](crate::engine) defines the execution-related aspects of the library
+//! - [`model`](crate::model) defines the information-related aspects of the library
 pub mod engine;
 pub mod model;
 
-use assert_no_alloc::*;
+use assert_no_alloc::AllocDisabler;
 
 #[cfg(debug_assertions)] // required when disable_release is set (default)
 #[global_allocator]
@@ -31,7 +39,7 @@ use engine::Engine;
 use futures::FutureExt;
 pub async fn demo() -> Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
-    dbg!(CRATE_PATH);
+    CRATE_PATH;
     let engine = {
         let project = ProjectData::new();
         Engine::new(project).unwrap()
@@ -117,7 +125,7 @@ pub async fn demo() -> Result<()> {
         })
         .await?;
 
-    dbg!("Here");
+    "Here";
     let clap_asset = engine
         .get(LoadAudioAsset(
             format!("{CRATE_PATH}/assets/clap.mp3").into(),

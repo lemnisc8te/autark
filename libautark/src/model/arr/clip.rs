@@ -100,9 +100,7 @@ impl Renderable for ResolvedAudioClip {
                 let clip_end = self.start + self.length;
                 let overlap_start = (*block_start).max(self.start);
                 let overlap_end = block_end.min(clip_end);
-                if overlap_start >= overlap_end {
-                    panic!("eventually figure out what goes here");
-                }
+                assert!(overlap_start < overlap_end, "eventually figure out what goes here");
                 for frame in (overlap_start.0)..overlap_end.0 {
                     let src_idx = ((frame - self.start.0) as usize) * self.asset.channels as usize;
                     let dst_idx = ((frame - block_start.0) as usize) * self.asset.channels as Type;
@@ -117,6 +115,6 @@ impl Renderable for ResolvedAudioClip {
                 }
             }
             AudioAssetPayload::Streaming => todo!(),
-        };
+        }
     }
 }

@@ -19,13 +19,15 @@ unused_unsafe = "forbid"
 unused_allocation = "forbid"
 unreachable_pub = "deny"
 unused_qualifications = "deny"
-# missing_docs = "warn"
+missing_docs = "warn"
 
 [workspace.lints.clippy]
+# Forbid
 fallible_impl_from = "forbid"
 used_underscore_items = "forbid"
 undocumented_unsafe_blocks = "forbid"
 
+# Deny
 pedantic = "deny"
 cargo = "deny"
 used_underscore_binding = "deny"
@@ -44,13 +46,13 @@ needless_pass_by_ref_mut = "deny"
 needless_pass_by_value = "deny"
 min_ident_chars = "deny"
 
+# Warnings
 unwrap_in_result = "warn"
 large_stack_frames = "warn"
 panic = "warn"
 dbg_macro = "warn"
-# unwrap_used = "warn"
-# restriction = "warn"
 
+# Allowed
 default_trait_access = "allow"
 type_complexity = "allow"
-missing_panics_doc = "allow"
+cargo_common_metadata = "allow"

@@ -46,6 +46,7 @@ impl NodeGraph {
             .find(|&id| self.input_sockets[id].name == name)
     }
 
+    #[must_use]
     pub fn output_socket_named(&self, node: NodeID, name: &str) -> Option<OutputSocketID> {
         let outs = self.node_output_sockets.get(node)?;
         outs.iter()
@@ -56,13 +57,13 @@ impl NodeGraph {
     pub fn purge(&mut self, node_id: NodeID) {
         self.nodes.remove(node_id);
         if let Some(in_sockets) = self.node_input_sockets.remove(node_id) {
-            for socket in in_sockets.iter() {
+            for socket in &in_sockets {
                 self.input_sockets.remove(*socket).unwrap();
                 self.links.remove(*socket).unwrap();
             }
         }
         if let Some(out_sockets) = self.node_output_sockets.remove(node_id) {
-            for socket in out_sockets.iter() {
+            for socket in &out_sockets {
                 self.output_sockets.remove(*socket).unwrap();
             }
         }
@@ -77,7 +78,7 @@ impl NodeGraph {
     pub fn add_node<N: Node>(&mut self, node: N) -> NodeID {
         let (inputs, outputs) = (node.spec_in(), node.spec_out());
         let node_id = self.nodes.insert(Arc::new(node));
-        let register_inputs = |graph: &mut NodeGraph, socks: Vec<Socket>| -> Vec<InputSocketID> {
+        let register_inputs = |graph: &mut Self, socks: Vec<Socket>| -> Vec<InputSocketID> {
             socks
                 .into_iter()
                 .map(|s| {
@@ -90,7 +91,7 @@ impl NodeGraph {
                 })
                 .collect()
         };
-        let register_outputs = |graph: &mut NodeGraph, socks: Vec<Socket>| -> Vec<OutputSocketID> {
+        let register_outputs = |graph: &mut Self, socks: Vec<Socket>| -> Vec<OutputSocketID> {
             socks
                 .into_iter()
                 .map(|s| {
@@ -132,6 +133,7 @@ impl NodeGraph {
     }
 
     /// All nodes that (transitively) feed `target`'s inputs, plus `target` itself.
+    #[must_use]
     pub fn ancestors_of(&self, target: NodeID) -> HashSet<NodeID> {
         let mut seen = HashSet::new();
         let mut stack = VecDeque::from([target]);
@@ -148,6 +150,7 @@ impl NodeGraph {
     }
 
     /// All nodes that (transitively) feed `target`'s inputs, plus `target` itself.
+    #[must_use]
     pub fn successors_of(&self, targets: &[NodeID]) -> HashSet<NodeID> {
         let mut seen = HashSet::new();
         let mut stack = VecDeque::from(targets.to_vec());

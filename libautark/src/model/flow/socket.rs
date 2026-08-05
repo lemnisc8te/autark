@@ -45,7 +45,7 @@ impl SocketMeta {
         name: impl Into<String>,
         kind: DataKind,
         visible: bool,
-    ) -> SocketMeta {
+    ) -> Self {
         Self {
             owner,
 

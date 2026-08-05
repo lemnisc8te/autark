@@ -1,6 +1,7 @@
 pub struct WorkerPool {}
 impl WorkerPool {
     /// Initializes the pool with a fixed number of workers
+    #[must_use]
     pub fn new() -> Self {
         Self {}
     }

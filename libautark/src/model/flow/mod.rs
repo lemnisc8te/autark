@@ -27,10 +27,12 @@ new_key_type! {
 pub struct Param(Arc<AtomicU32>); // f32 via to_bits/from_bits
 
 impl Param {
+    #[must_use]
     pub fn new(v: f32) -> Self {
         Self(Arc::new(AtomicU32::new(v.to_bits())))
     }
     #[inline]
+    #[must_use]
     pub fn get(&self) -> f32 {
         f32::from_bits(self.0.load(Ordering::Relaxed))
     }

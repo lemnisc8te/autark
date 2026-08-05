@@ -2,6 +2,9 @@
 name = "libautark"
 version = "0.1.0"
 edition = "2024"
+readme = "../README.md"
+keywords = ["audio", "music", "daw", "dsp"]
+categories = ["multimedia::audio"]
 
 [lints]
 workspace = true

@@ -45,6 +45,7 @@ pub struct ProjectData {
 }
 
 impl ProjectData {
+    #[must_use]
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
 
@@ -78,7 +79,7 @@ impl ProjectData {
     ) -> Result<()>
     where
         K: Kind,
-        K::Track: Stored<Location = ProjectData>,
+        K::Track: Stored<Location = Self>,
         K::Clip: Stored<Location = Self>,
     {
         let track = K::Track::access_mut(self)
@@ -101,8 +102,8 @@ impl ProjectData {
     ) -> Result<<K::Clip as Stored>::ID>
     where
         K: Kind,
-        K::Track: Stored<Location = ProjectData>,
-        K::Clip: Stored<Location = ProjectData>,
+        K::Track: Stored<Location = Self>,
+        K::Clip: Stored<Location = Self>,
     {
         let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
         let track = K::Track::access_mut(self)
@@ -119,8 +120,8 @@ impl ProjectData {
     ) -> (<K::Track as Stored>::ID, NodeID)
     where
         TrackReader<K>: Node,
-        K::Track: Stored<Location = ProjectData>,
-        K::Clip: Stored<Location = ProjectData>,
+        K::Track: Stored<Location = Self>,
+        K::Clip: Stored<Location = Self>,
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
         let reader_node = TrackReader::<K>::new(track_id, channels);
@@ -163,7 +164,7 @@ impl ProjectData {
         Ok(id)
     }
 
-    pub fn remove_node_input(&mut self, node_id: NodeID) -> Result<()> {
+    pub fn remove_node_input(&mut self, _node_id: NodeID) -> Result<()> {
         todo!()
     }
 
@@ -223,7 +224,7 @@ impl ProjectData {
                 output_slots,
             });
         }
-        dbg!(buffer_count);
+        buffer_count;
 
         let master_output_slot = self
             .graph
@@ -262,6 +263,7 @@ pub struct ProjectHistory {
 }
 
 impl ProjectHistory {
+    #[must_use]
     pub fn new(current: ProjectData) -> Self {
         Self {
             current,
