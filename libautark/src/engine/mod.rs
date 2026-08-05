@@ -11,7 +11,7 @@ pub mod util;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
-use crate::engine::manager::{HasHandle, MultithreadManager};
+use crate::engine::manager::{HasHandle, MultithreadManager, Permission};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
@@ -41,9 +41,6 @@ pub struct ScheduleStep {
     pub input_slots: Vec<SlotIndex>,
     pub output_slots: Vec<SlotIndex>,
 }
-
-unsafe impl Send for ScheduleStep {}
-unsafe impl Sync for ScheduleStep {}
 
 #[derive(Default, Clone)]
 pub struct CompiledGraph {
@@ -141,17 +138,19 @@ impl HasHandle<AudioActor> for Engine {
 }
 
 impl Engine {
-    pub async fn get<C>(&self, command: C) -> C::Output
+    pub async fn get<C, P>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope,
+        P: Permission<C::Actor>,
+        C: IntoEnvelope<P>,
         Self: HasHandle<C::Actor>,
     {
         HasHandle::<C::Actor>::handle(self).call(command).await
     }
 
-    pub async fn fire<C>(&self, command: C)
+    pub async fn fire<C, P>(&self, command: C)
     where
-        C: IntoEnvelope,
+        P: Permission<C::Actor>,
+        C: IntoEnvelope<P>,
         Self: HasHandle<C::Actor>,
     {
         let _ = HasHandle::<C::Actor>::handle(self).notify(command).await;

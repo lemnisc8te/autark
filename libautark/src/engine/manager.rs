@@ -1,24 +1,18 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::oneshot;
+use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, oneshot};
 
 pub mod asset;
 pub mod audio;
 pub mod project;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PriorityLevel {
-    Low = 0,      // Regular system traffic
-    Standard = 1, // Normal WaitForAudioAsset commands
-    High = 2,     // IO Completion notifications & Lifecycle events
-}
-
-// #[async_trait]
 pub trait Actor: Send + Sync + Sized + 'static {
     type InitParams: Send;
-    type Envelope: Envelope<Self>;
+    // type Envelope: Envelope<Self>;
     type Carrier: Carrier<Self>;
+    type Data;
+
     fn new(params: Self::InitParams, loopback: Handle<Self>) -> Self;
 
     /// Run once before the first command is processed.
@@ -28,23 +22,63 @@ pub trait Actor: Send + Sync + Sized + 'static {
     fn on_stop(&self) {}
 }
 
-pub trait Operate: Actor {
-    type Data: Send;
-    async fn mutate<O>(&self, f: impl AsyncFnOnce(&mut Self::Data) -> O) -> O;
-    async fn query<O>(&self, f: impl AsyncFn(&Self::Data) -> O) -> O;
+pub enum Delivery<A: Actor> {
+    Read(BoxedReadEnvelope<A>),
+    Write(BoxedWriteEnvelope<A>),
 }
 
-pub trait IntoEnvelope: Command {
-    fn into_envelope<R>(self, reply: R) -> <Self::Actor as Actor>::Envelope
+pub struct Query;
+pub struct Modify;
+
+pub trait Permission<A: Actor>: Sized + Send + 'static {
+    type Guard: Send;
+
+    /// Runs once per envelope, before `data`/`execute`. No-op for `Ref`;
+    /// `Mutate`/`ActorRef` use it to commit the pre-mutation undo entry.
+    fn pre_hook(_actor: &mut A) {}
+
+    fn lock(actor: Arc<RwLock<A>>) -> impl Future<Output = Self::Guard>;
+
+    fn delivery<E: Envelope<A, Self> + 'static>(env: E) -> Delivery<A>;
+}
+
+impl<A: Actor> Permission<A> for Query {
+    type Guard = OwnedRwLockReadGuard<A>;
+
+    fn lock(actor: Arc<RwLock<A>>) -> impl Future<Output = Self::Guard> {
+        actor.read_owned()
+    }
+
+    fn delivery<E: Envelope<A, Self> + 'static>(env: E) -> Delivery<A> {
+        Delivery::Read(Box::new(env))
+    }
+}
+impl<A: Actor> Permission<A> for Modify {
+    type Guard = OwnedRwLockWriteGuard<A>;
+
+    fn lock(actor: Arc<RwLock<A>>) -> impl Future<Output = Self::Guard> {
+        actor.write_owned()
+    }
+
+    fn delivery<E: Envelope<A, Self> + 'static>(env: E) -> Delivery<A> {
+        Delivery::Write(Box::new(env))
+    }
+}
+
+pub trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
+    fn into_envelope<R>(self, reply: R) -> Delivery<Self::Actor>
     where
         R: ReplyPort<Self::Output> + 'static;
 }
 
-pub trait Command: Send + 'static {
-    type Output: Send + 'static;
-    type Actor: Actor + Operate + 'static;
+pub trait Command<P: Permission<Self::Actor>>: Send + 'static {
+    type Output: Send;
+    type Actor: Actor;
 
-    fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> + Send;
+    fn execute(
+        self,
+        actor: <P as Permission<Self::Actor>>::Guard,
+    ) -> impl Future<Output = Self::Output> + Send;
 }
 
 /// Every command still *executes* and still *produces* an `Output` — the
@@ -75,40 +109,52 @@ impl<O: Send> ReplyPort<O> for NoReply {
 }
 
 #[async_trait]
-pub trait Envelope<A: Actor>: Send {
-    async fn engage(self: Box<Self>, handle: Arc<A>);
+pub trait Envelope<A: Actor, P: Permission<A>>: Send {
+    async fn engage(self: Box<Self>, handle: P::Guard);
 }
 
-pub type BoxedEnvelope<A> = Box<dyn Envelope<A>>;
+pub type BoxedReadEnvelope<A> = Box<dyn Envelope<A, Query>>;
+pub type BoxedWriteEnvelope<A> = Box<dyn Envelope<A, Modify>>;
+
+pub type BoxedEnvelope<A, P: Permission<A>> = Box<dyn Envelope<A, P::Guard>>;
 
 #[async_trait]
-impl<A: Actor> Envelope<A> for BoxedEnvelope<A> {
-    async fn engage(self: Box<Self>, handle: Arc<A>) {
+impl<A: Actor> Envelope<A, Query> for BoxedReadEnvelope<A> {
+    async fn engage(self: Box<Self>, handle: <Query as Permission<A>>::Guard) {
         (*self).engage(handle).await;
     }
 }
 
-struct StdEnvelope<A, C, R>
+#[async_trait]
+impl<A: Actor> Envelope<A, Modify> for BoxedWriteEnvelope<A> {
+    async fn engage(self: Box<Self>, handle: <Modify as Permission<A>>::Guard) {
+        (*self).engage(handle).await;
+    }
+}
+
+struct StdEnvelope<A, C, R, P>
 where
-    C: Command,
+    C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
     A: Actor,
+    P: Permission<A>,
 {
     command: C,
     reply: R,
-    _actor: PhantomData<fn() -> A>,
+    _actor: PhantomData<fn(P) -> A>,
 }
 
-impl<C> IntoEnvelope for C
+impl<C, P> IntoEnvelope<P> for C
 where
-    C: Command,
-    C::Actor: Actor<Envelope = BoxedEnvelope<C::Actor>>,
+    C: Command<P>,
+    P: Permission<C::Actor>,
+    C::Actor: Actor,
 {
-    fn into_envelope<R>(self, reply: R) -> <C::Actor as Actor>::Envelope
+    fn into_envelope<R>(self, reply: R) -> Delivery<Self::Actor>
     where
         R: ReplyPort<Self::Output> + 'static,
     {
-        Box::new(StdEnvelope {
+        P::delivery(StdEnvelope {
             command: self,
             reply,
             _actor: PhantomData,
@@ -117,14 +163,15 @@ where
 }
 
 #[async_trait]
-impl<A: Actor, C, R> Envelope<A> for StdEnvelope<A, C, R>
+impl<A: Actor, C, R, P> Envelope<A, P> for StdEnvelope<A, C, R, P>
 where
-    C: Command<Actor = A>,
+    P: Permission<A>,
+    C: Command<P, Actor = A>,
     R: ReplyPort<C::Output>,
 {
-    async fn engage(self: Box<Self>, actor: Arc<A>) {
+    async fn engage(self: Box<Self>, lock: P::Guard) {
         let Self { command, reply, .. } = *self;
-        let output = command.execute(&actor).await;
+        let output = command.execute(lock).await;
         reply.send(output);
     }
 }
@@ -145,13 +192,13 @@ pub trait Carrier<A: Actor>: Send {
     ///
     /// # Errors
     /// - Implementation specific
-    async fn send(sender: &Self::Sender, envelope: A::Envelope) -> Result<()>;
+    async fn send(sender: &Self::Sender, envelope: Delivery<A>) -> Result<()>;
 
     /// Awaits the next envelope, or `None` once the transport is closed.
     ///
     /// # Errors
     /// - Implementation Specific
-    async fn recv(receiver: &Self::Receiver) -> Result<A::Envelope>;
+    async fn recv(receiver: &Self::Receiver) -> Result<Delivery<A>>;
 }
 
 pub struct StdCarrier<A: Actor> {
@@ -160,8 +207,8 @@ pub struct StdCarrier<A: Actor> {
 
 #[async_trait]
 impl<A: Actor> Carrier<A> for StdCarrier<A> {
-    type Sender = flume::Sender<<A as Actor>::Envelope>;
-    type Receiver = flume::Receiver<<A as Actor>::Envelope>;
+    type Sender = flume::Sender<Delivery<A>>;
+    type Receiver = flume::Receiver<Delivery<A>>;
     // type Sender = async_priority_channel::Sender<<A as Actor>::Envelope, PriorityLevel>;
     // type Receiver = async_priority_channel::Receiver<<A as Actor>::Envelope, PriorityLevel>;
 
@@ -169,12 +216,12 @@ impl<A: Actor> Carrier<A> for StdCarrier<A> {
         flume::bounded(capacity)
     }
 
-    async fn send(sender: &Self::Sender, envelope: <A as Actor>::Envelope) -> Result<()> {
+    async fn send(sender: &Self::Sender, envelope: Delivery<A>) -> Result<()> {
         sender.send_async(envelope).await.expect("Failed to send");
         Ok(())
     }
 
-    async fn recv(receiver: &Self::Receiver) -> Result<<A as Actor>::Envelope> {
+    async fn recv(receiver: &Self::Receiver) -> Result<Delivery<A>> {
         Ok(receiver.recv_async().await?)
     }
 }
@@ -203,9 +250,10 @@ impl<A: Actor> Clone for Handle<A> {
 }
 
 impl<A: Actor> Handle<A> {
-    async fn send_envelope<C, R>(&self, command: C, reply: R) -> Result<()>
+    async fn send_envelope<C, R, P>(&self, command: C, reply: R) -> Result<()>
     where
-        C: IntoEnvelope<Actor = A>,
+        P: Permission<C::Actor>,
+        C: IntoEnvelope<P, Actor = A>,
         R: ReplyPort<C::Output> + 'static,
     {
         let envelope = command.into_envelope::<_>(reply);
@@ -213,9 +261,10 @@ impl<A: Actor> Handle<A> {
     }
 
     /// Run a read-only `Command` and await its result.
-    pub async fn call<C>(&self, command: C) -> C::Output
+    pub async fn call<C, P>(&self, command: C) -> C::Output
     where
-        C: IntoEnvelope<Actor = A>,
+        C: IntoEnvelope<P, Actor = A>,
+        P: Permission<C::Actor>,
     {
         let (tx, rx) = oneshot::channel();
         self.send_envelope(command, Reply(tx))
@@ -227,9 +276,10 @@ impl<A: Actor> Handle<A> {
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
-    pub async fn notify<C>(&self, command: C) -> Result<()>
+    pub async fn notify<C, P>(&self, command: C) -> Result<()>
     where
-        C: IntoEnvelope<Actor = A>,
+        C: IntoEnvelope<P, Actor = A>,
+        P: Permission<C::Actor>,
     {
         self.send_envelope(command, NoReply).await
     }
@@ -248,7 +298,9 @@ pub trait Manager<A: Actor> {
 
 /// The stock `Manager`: runs the actor loop directly on the tokio
 /// runtime, using whichever `Transport` is specified.
-pub struct StdManager<A: Actor>(PhantomData<A>);
+pub struct StdManager<A: Actor> {
+    _p: PhantomData<A>,
+}
 
 impl<A> Manager<A> for StdManager<A>
 where
@@ -261,12 +313,22 @@ where
         let actor = A::new(params, loopback.clone());
 
         tokio::spawn(async move {
-            let actor = Arc::new(actor);
-            while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                Box::new(envelope).engage(actor.clone()).await;
+            let actor = Arc::new(RwLock::new(actor));
+            while let Ok(delivery) = A::Carrier::recv(&receiver).await {
+                let actor = Arc::clone(&actor);
+                match delivery {
+                    Delivery::Read(envelope) => {
+                        let guard = Query::lock(actor).await;
+                        envelope.engage(guard).await;
+                    }
+                    Delivery::Write(envelope) => {
+                        let guard = Modify::lock(actor).await;
+                        envelope.engage(guard).await;
+                    }
+                }
             }
 
-            actor.on_stop();
+            actor.write().await.on_stop();
             actor
         });
 
@@ -296,20 +358,30 @@ where
         let (sender, receiver) = A::Carrier::pair(mailbox_capacity);
         let handle = Handle { sender };
         let loopback = handle.clone();
+        let actor = A::new(params, loopback.clone());
 
         tokio::spawn(async move {
-            let actor = Arc::new(A::new(params, loopback.clone()));
-
-            while let Ok(envelope) = A::Carrier::recv(&receiver).await {
-                let actor_clone = Arc::clone(&actor);
-
-                // Spawn a task to handle the individual message safely
-                tokio::spawn(async move {
-                    Box::new(envelope).engage(actor_clone).await;
-                });
+            let actor = Arc::new(RwLock::new(actor));
+            while let Ok(delivery) = A::Carrier::recv(&receiver).await {
+                let actor = Arc::clone(&actor);
+                match delivery {
+                    Delivery::Read(envelope) => {
+                        let guard = Query::lock(actor).await;
+                        tokio::spawn(async move {
+                            envelope.engage(guard).await;
+                        });
+                    }
+                    Delivery::Write(envelope) => {
+                        let guard = Modify::lock(actor).await;
+                        tokio::spawn(async move {
+                            envelope.engage(guard).await;
+                        });
+                    }
+                }
             }
 
-            actor.on_stop();
+            actor.write().await.on_stop();
+            actor
         });
 
         handle

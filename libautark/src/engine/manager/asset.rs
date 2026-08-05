@@ -5,14 +5,11 @@ use anyhow::Result;
 use slotmap::SlotMap;
 use std::fs::File;
 use std::sync::Arc;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::watch;
 
 use crate::{
     engine::{
-        manager::{
-            Actor, BoxedEnvelope, Handle, HasHandle, Operate, StdCarrier,
-            asset::commands::LoadAudioAsset,
-        },
+        manager::{Actor, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset},
         util::workerpool::WorkerPool,
     },
     model::{
@@ -200,7 +197,7 @@ impl AssetRegistry {
 }
 
 pub struct AssetActor {
-    reg: RwLock<AssetRegistry>,
+    reg: AssetRegistry,
     loopback: Handle<Self>,
 }
 
@@ -216,28 +213,13 @@ impl HasHandle<Self> for AssetActor {
 
 impl Actor for AssetActor {
     type InitParams = ();
-
-    type Envelope = BoxedEnvelope<Self>;
-
     type Carrier = StdCarrier<Self>;
+    type Data = AssetRegistry;
 
     fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
         Self {
             reg: AssetRegistry::new().into(),
             loopback,
         }
-    }
-}
-
-impl Operate for AssetActor {
-    type Data = AssetRegistry;
-    async fn mutate<O>(&self, f: impl AsyncFnOnce(&mut Self::Data) -> O) -> O {
-        let mut lock = self.reg.write().await;
-        f(&mut lock).await
-    }
-
-    async fn query<O>(&self, f: impl AsyncFn(&Self::Data) -> O) -> O {
-        let lock = self.reg.read().await;
-        f(&lock).await
     }
 }

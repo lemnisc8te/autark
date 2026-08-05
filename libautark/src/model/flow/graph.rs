@@ -58,6 +58,7 @@ impl NodeGraph {
         if let Some(in_sockets) = self.node_input_sockets.remove(node_id) {
             for socket in in_sockets.iter() {
                 self.input_sockets.remove(*socket).unwrap();
+                self.links.remove(*socket).unwrap();
             }
         }
         if let Some(out_sockets) = self.node_output_sockets.remove(node_id) {

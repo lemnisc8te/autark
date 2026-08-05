@@ -1,7 +1,7 @@
 use crate::{
     engine::{
         manager::{
-            Command, Handle, Operate,
+            Command, Handle, Modify, Permission,
             asset::AssetActor,
             project::{ProjectActor, commands::ProjectCommand},
         },
@@ -18,17 +18,14 @@ pub struct Publish {
 
 impl ProjectCommand for Publish {}
 
-impl Command for Publish {
+impl Command<Modify> for Publish {
     type Output = Result<GraphUpdate>;
-
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &ProjectActor) -> Self::Output {
+    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| {
-                proj.publish_current(&self.asset_h, self.filter.as_deref())
-                    .await
-            })
+            .data
+            .publish_current(&self.asset_h, self.filter.as_deref())
             .await
     }
 }

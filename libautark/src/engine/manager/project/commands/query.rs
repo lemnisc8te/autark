@@ -1,6 +1,6 @@
 use crate::{
     engine::manager::{
-        Command, Operate,
+        Command, Permission, Query,
         project::{ProjectActor, commands::ProjectCommand},
     },
     model::flow::{
@@ -13,12 +13,11 @@ pub struct GetMasterNodeId;
 
 impl ProjectCommand for GetMasterNodeId {}
 
-impl Command for GetMasterNodeId {
+impl Command<Query> for GetMasterNodeId {
     type Output = NodeID;
-
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &Self::Actor) -> Self::Output {
+    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor.query(async |proj| proj.current.master_node_id).await
     }
 }
@@ -27,13 +26,14 @@ pub struct InputSocketOf(pub NodeID, pub usize);
 
 impl ProjectCommand for InputSocketOf {}
 
-impl Command for InputSocketOf {
+impl Command<Query> for InputSocketOf {
     type Output = InputSocketID;
-
     type Actor = ProjectActor;
 
-    fn execute(self, actor: &Self::Actor) -> impl Future<Output = Self::Output> {
-        actor.query(async move |proj| proj.current.graph.inputs_of(self.0)[self.1])
+    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+        actor
+            .query(async move |proj| proj.current.graph.inputs_of(self.0)[self.1])
+            .await
     }
 }
 
@@ -41,12 +41,11 @@ pub struct OutputSocketOf(pub NodeID, pub usize);
 
 impl ProjectCommand for OutputSocketOf {}
 
-impl Command for OutputSocketOf {
+impl Command<Query> for OutputSocketOf {
     type Output = OutputSocketID;
-
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: &Self::Actor) -> Self::Output {
+    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .query(async move |proj| proj.current.graph.outputs_of(self.0)[self.1])
             .await

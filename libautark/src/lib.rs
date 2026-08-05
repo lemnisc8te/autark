@@ -36,13 +36,9 @@
     // clippy::restriction
 )]
 #[allow(
-    // warnings,
-    // unused_variables,
-    // clippy::must_use_candidate,
     clippy::default_trait_access,
     clippy::type_complexity,
-    clippy::missing_panics_doc,
-    unstable_name_collisions
+    clippy::missing_panics_doc
 )]
 pub mod engine;
 pub mod model;
