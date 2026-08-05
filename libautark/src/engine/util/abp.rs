@@ -1,6 +1,11 @@
 //! Home of the `BlockBufferPool`, a pool of memory created for the exclusive usage of the audio thread.
 use crate::engine::SlotIndex;
 
+/// Contiguous memory used during `execute_block` in the audio callback.
+///
+/// The length of [`memory`] depends on the maximum number of slots in the scheduler.  Each slot is [`block_size`]d.
+///
+/// Can be transformed into a [`PoolExecutor`] for access to slots via their index.
 pub struct AudioBufferPool {
     /// Contiguous pre-allocated block: (`buffer_count` * `block_size`)
     memory: Vec<f32>,
@@ -35,6 +40,13 @@ impl AudioBufferPool {
 }
 
 /// A short-lived handle for zero-allocation, arbitrary buffer slicing
+///
+/// # Safety
+/// This is the most unsafe part of the [`Engine`]. However, it can be used safely provided the invariants are held:
+///
+/// ONLY 1 thread may access each slot in the `PoolExecutor` at a time. Currently, this is possible because the audio callback is single threaded, and therefore no cross-thread aliasing can happen.
+///
+/// #
 pub struct PoolExecutor {
     ptr: *mut f32,
     pub block_size: usize,

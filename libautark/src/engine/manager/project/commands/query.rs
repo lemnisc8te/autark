@@ -18,7 +18,9 @@ impl Command<Query> for GetMasterNodeId {
     type Actor = ProjectActor;
 
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
-        actor.query(async |proj| proj.current.master_node_id).await
+        actor
+            .query(async |proj| proj.project().master_node_id)
+            .await
     }
 }
 
@@ -32,7 +34,7 @@ impl Command<Query> for InputSocketOf {
 
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async move |proj| proj.current.graph.inputs_of(self.0)[self.1])
+            .query(async move |proj| proj.project().graph.inputs_of(self.0)[self.1])
             .await
     }
 }
@@ -47,7 +49,7 @@ impl Command<Query> for OutputSocketOf {
 
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async move |proj| proj.current.graph.outputs_of(self.0)[self.1])
+            .query(async move |proj| proj.project().graph.outputs_of(self.0)[self.1])
             .await
     }
 }

@@ -16,7 +16,7 @@ use crate::{
             nodes::trackreader::TrackReader,
             socket::{InputSocketID, OutputSocketID, Socket},
         },
-        project::{ProjectData, ProjectMetaData},
+        project::{ProjectData, ProjectHistory},
     },
 };
 
@@ -39,7 +39,7 @@ where
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.current.add_track::<K>(self.name, self.channels))
+            .mutate(async |proj| proj.project_mut().add_track::<K>(self.name, self.channels))
             .await
     }
 }
@@ -60,7 +60,7 @@ where
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         {
             actor
-                .mutate(async |proj| proj.current.remove_track::<K>(self.0))
+                .mutate(async |proj| proj.project_mut().remove_track::<K>(self.0))
                 .await
         }
     }
@@ -87,7 +87,7 @@ where
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
-                proj.current.add_clip_to_track::<K>(
+                proj.project_mut().add_clip_to_track::<K>(
                     self.track_id,
                     self.start,
                     self.end,
@@ -118,7 +118,7 @@ where
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
-                proj.current
+                proj.project_mut()
                     .move_clip::<K>(self.track, self.clip, self.new_start)
             })
             .await
@@ -137,7 +137,7 @@ impl<N: Node> Command<Modify> for AddNode<N> {
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.current.graph.add_node(self.node))
+            .mutate(async |proj| proj.project_mut().graph.add_node(self.node))
             .await
     }
 }
@@ -155,7 +155,7 @@ impl Command<Modify> for AddLink {
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.current.add_link(self.from, self.to))
+            .mutate(async |proj| proj.project_mut().add_link(self.from, self.to))
             .await
     }
 }
@@ -173,7 +173,7 @@ impl Command<Modify> for RemoveLink {
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.current.remove_link(self.from, self.to))
+            .mutate(async |proj| proj.project_mut().remove_link(self.from, self.to))
             .await
     }
 }
@@ -201,7 +201,7 @@ impl<K: Kind> Command<Modify> for AddNodeInput<K> {
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
-                proj.current.add_input_socket_to_node(
+                proj.project_mut().add_input_socket_to_node(
                     self.node_id,
                     Socket::new(K::into_datakind(), "in", true),
                 )
@@ -222,7 +222,7 @@ impl Command<Modify> for RemoveNodeInput {
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.current.remove_node_input(self.node_id))
+            .mutate(async |proj| proj.project_mut().remove_node_input(self.node_id))
             .await
     }
 }
@@ -252,7 +252,7 @@ where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
     T: Send + 'static,
-    K::Track: Stored<Location = ProjectMetaData>,
+    K::Track: Stored<Location = ProjectHistory>,
 {
     type Output = Result<T>;
     type Actor = ProjectActor;

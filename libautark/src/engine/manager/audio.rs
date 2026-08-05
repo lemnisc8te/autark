@@ -62,7 +62,7 @@ impl AudioActor {
         stream.play()?; // device stream runs continuously; transport gates output
         Ok(Self {
             transport,
-            update_tx: SyncProducer(update_tx).into(),
+            update_tx: SyncProducer(update_tx),
             _stream: stream,
             loopback,
         })

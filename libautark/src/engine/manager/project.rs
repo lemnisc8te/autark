@@ -1,24 +1,24 @@
 use crate::{
     engine::manager::{Handle, HasHandle, StdCarrier},
-    model::project::{ProjectData, ProjectMetaData},
+    model::project::{ProjectData, ProjectHistory},
 };
 
 use crate::engine::manager::Actor;
 
 pub struct ProjectActor {
-    pub data: ProjectMetaData,
+    pub data: ProjectHistory,
     pub loopback: Handle<Self>,
 }
 
 impl ProjectActor {
-    async fn mutate<O>(&mut self, f: impl AsyncFnOnce(&mut ProjectMetaData) -> O) -> O {
+    async fn mutate<O>(&mut self, func: impl AsyncFnOnce(&mut ProjectHistory) -> O) -> O {
         let proj = self.data.project().clone();
         self.data.commit(proj);
-        f(&mut self.data).await
+        func(&mut self.data).await
     }
 
-    async fn query<O>(&self, f: impl AsyncFn(&ProjectMetaData) -> O) -> O {
-        f(&self.data).await
+    async fn query<O>(&self, func: impl AsyncFn(&ProjectHistory) -> O) -> O {
+        func(&self.data).await
     }
 }
 
@@ -33,11 +33,11 @@ impl HasHandle<Self> for ProjectActor {
 impl Actor for ProjectActor {
     type InitParams = ProjectData;
     type Carrier = StdCarrier<Self>;
-    type Data = ProjectMetaData;
+    type Data = ProjectHistory;
 
     fn new(current: Self::InitParams, loopback: Handle<Self>) -> Self {
         Self {
-            data: ProjectMetaData::new(current).into(),
+            data: ProjectHistory::new(current),
             loopback,
         }
     }

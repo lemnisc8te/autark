@@ -218,7 +218,7 @@ impl Actor for AssetActor {
 
     fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
         Self {
-            reg: AssetRegistry::new().into(),
+            reg: AssetRegistry::new(),
             loopback,
         }
     }

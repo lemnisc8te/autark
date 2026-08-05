@@ -116,7 +116,7 @@ pub trait Envelope<A: Actor, P: Permission<A>>: Send {
 pub type BoxedReadEnvelope<A> = Box<dyn Envelope<A, Query>>;
 pub type BoxedWriteEnvelope<A> = Box<dyn Envelope<A, Modify>>;
 
-pub type BoxedEnvelope<A, P: Permission<A>> = Box<dyn Envelope<A, P::Guard>>;
+pub type BoxedEnvelope<A, P> = Box<dyn Envelope<A, <P as Permission<A>>::Guard>>;
 
 #[async_trait]
 impl<A: Actor> Envelope<A, Query> for BoxedReadEnvelope<A> {

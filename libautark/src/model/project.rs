@@ -34,18 +34,14 @@ use futures::future::{join_all, try_join_all};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
+/// Project arrangement data.
+///
+/// See [`ProjectHistory`]
 pub struct ProjectData {
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
     pub clips: SlotMap<AudioClipID, AudioClip>,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
-}
-
-pub struct ProjectMetaData {
-    pub(crate) current: ProjectData,
-    pub(crate) undo_stack: Vec<ProjectData>,
-    pub(crate) redo_stack: Vec<ProjectData>,
-    pub(crate) known_node_ids: HashSet<NodeID>,
 }
 
 impl ProjectData {
@@ -83,7 +79,7 @@ impl ProjectData {
     where
         K: Kind,
         K::Track: Stored<Location = ProjectData>,
-        K::Clip: Stored<Location = ProjectData>,
+        K::Clip: Stored<Location = Self>,
     {
         let track = K::Track::access_mut(self)
             .get_mut(track)
@@ -136,8 +132,8 @@ impl ProjectData {
     pub fn remove_track<K>(&mut self, track_id: <K::Track as Stored>::ID) -> Result<()>
     where
         K: Kind,
-        K::Track: Stored<Location = ProjectData>,
-        K::Clip: Stored<Location = ProjectData>,
+        K::Track: Stored<Location = Self>,
+        K::Clip: Stored<Location = Self>,
     {
         let track = <K as Kind>::Track::access_mut(self)
             .remove(track_id)
@@ -206,10 +202,10 @@ impl ProjectData {
                 .map(|&in_id| {
                     self.graph
                         .links
-                        .get(in_id) // O(1) lookup — no per-socket Vec to build anymore
+                        .get(in_id)
                         .and_then(|src| socket_slot.get(src))
                         .copied()
-                        .unwrap_or(0) // unconnected -> reserved silence slot
+                        .unwrap_or(0)
                 })
                 .collect();
 
@@ -227,6 +223,7 @@ impl ProjectData {
                 output_slots,
             });
         }
+        dbg!(buffer_count);
 
         let master_output_slot = self
             .graph
@@ -251,7 +248,20 @@ impl Default for ProjectData {
     }
 }
 
-impl ProjectMetaData {
+/// A container for meta-operations on [`ProjectData`].
+///
+/// Because all mutations on [`ProjectData`] must be tracked by the undo/redo system, the only way to access the current project is via [`Self::project`]/ [`Self::project_mut`]
+///
+/// [`ProjectHistory`] also compiles the [`GraphUpdate`] passed to the audio thread.
+pub struct ProjectHistory {
+    current: ProjectData,
+    undo_stack: Vec<ProjectData>,
+    redo_stack: Vec<ProjectData>,
+    /// Currently, this field keeps track of the `[NodeID]`s that the last update contained.
+    known_node_ids: HashSet<NodeID>,
+}
+
+impl ProjectHistory {
     pub fn new(current: ProjectData) -> Self {
         Self {
             current,

@@ -13,3 +13,44 @@ thiserror = "2.0.18"
 serde = {version = "1.0.228", features = ["derive"]}
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "fs", "macros", "tracing"] }
 console-subscriber = "0.5.0"
+
+[workspace.lints.rust]
+unused_unsafe = "forbid"
+unused_allocation = "forbid"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+# missing_docs = "warn"
+
+[workspace.lints.clippy]
+fallible_impl_from = "forbid"
+used_underscore_items = "forbid"
+undocumented_unsafe_blocks = "forbid"
+
+pedantic = "deny"
+cargo = "deny"
+used_underscore_binding = "deny"
+perf = "deny"
+correctness = "deny"
+suspicious = "deny"
+complexity = "deny"
+style = "deny"
+branches_sharing_code = "deny"
+use_self = "deny"
+redundant_allocation = "deny"
+deref_by_slicing = "deny"
+cloned_instead_of_copied = "deny"
+ptr_arg = "deny"
+needless_pass_by_ref_mut = "deny"
+needless_pass_by_value = "deny"
+min_ident_chars = "deny"
+
+unwrap_in_result = "warn"
+large_stack_frames = "warn"
+panic = "warn"
+dbg_macro = "warn"
+# unwrap_used = "warn"
+# restriction = "warn"
+
+default_trait_access = "allow"
+type_complexity = "allow"
+missing_panics_doc = "allow"
