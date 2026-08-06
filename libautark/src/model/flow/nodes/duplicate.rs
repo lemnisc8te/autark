@@ -1,20 +1,21 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::{
-    engine::{SlotIndex, tick::Tick, util::abp::PoolExecutor},
+    engine::{schedule::SlotIndex, tick::Tick, util::abp::PoolExecutor},
     model::{
         Audio, DataKind, Kind,
         flow::{MultiInputNode, Node, Socket},
     },
 };
 
-#[derive(Debug, Clone, Default)]
 /// Duplicates an incoming signal into multiple output copies
-/// # Spec
+///
+///  # Spec
 /// ## Inputs
 /// 0) Main Input: K
 /// ## Outputs
 /// 0) Variadic Output: K
+#[derive(Debug, Clone, Default)]
 pub struct Duplicate<K: Kind> {
     kind: PhantomData<K>,
 }

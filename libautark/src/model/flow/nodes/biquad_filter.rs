@@ -1,7 +1,7 @@
-use std::f32::consts::PI;
+use core::f32::consts::PI;
 
 use crate::{
-    engine::{SlotIndex, tick::Tick},
+    engine::{schedule::SlotIndex, tick::Tick},
     model::{
         DataKind,
         flow::{Node, Socket},

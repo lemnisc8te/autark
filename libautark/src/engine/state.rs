@@ -1,9 +1,9 @@
-use std::{any::Any, collections::HashSet};
-
+use core::any::Any;
 use slotmap::SecondaryMap;
+use std::collections::HashSet;
 
 use crate::{
-    engine::{CompiledGraph, constants::MAX_NODES},
+    engine::{constants::MAX_NODES, schedule::CompiledGraph},
     model::flow::NodeID,
 };
 
@@ -96,11 +96,11 @@ pub struct VecDiff<T> {
 impl<T> DiffProvider for VecDiff<T> {
     type Element = T;
     type Additions<'a>
-        = std::slice::Iter<'a, T>
+        = core::slice::Iter<'a, T>
     where
         T: 'a;
     type Removals<'a>
-        = std::slice::Iter<'a, T>
+        = core::slice::Iter<'a, T>
     where
         T: 'a;
 
@@ -114,11 +114,11 @@ impl<T> DiffProvider for VecDiff<T> {
 }
 
 // 2. Implement CanDiff for Vec<T>
-impl<T: Eq + std::hash::Hash + Clone> CanDiff for Vec<T> {
+impl<T: Eq + core::hash::Hash + Clone> CanDiff for Vec<T> {
     type Element = T;
     type Provider = VecDiff<T>;
     type Elements<'a>
-        = std::slice::Iter<'a, T>
+        = core::slice::Iter<'a, T>
     where
         T: 'a;
 

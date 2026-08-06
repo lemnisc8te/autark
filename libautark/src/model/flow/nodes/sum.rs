@@ -1,7 +1,7 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::{
-    engine::{SlotIndex, tick::Tick, util::abp::PoolExecutor},
+    engine::{Tick, schedule::SlotIndex, util::abp::PoolExecutor},
     model::{
         Audio, DataKind, Kind,
         flow::{MultiInputNode, Node, Socket},

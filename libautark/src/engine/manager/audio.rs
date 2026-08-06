@@ -1,16 +1,15 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
+
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use cpal::traits::StreamTrait;
 
 use crate::engine::{
-    CompiledGraph,
+    EngineConfig,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
-    engineconfig::EngineConfig,
     manager::{Actor, Command, Handle, HasHandle, Modify, Permission, StdCarrier},
+    schedule::CompiledGraph,
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
@@ -53,7 +52,7 @@ impl AudioActor {
                 while let Ok(garbage) = garbage_rx.pop() {
                     drop(garbage);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::sleep(core::time::Duration::from_millis(5));
             }
         });
 

@@ -1,13 +1,13 @@
 //! Home of the `BlockBufferPool`, a pool of memory created for the exclusive usage of the audio thread.
-use crate::engine::SlotIndex;
+use crate::engine::schedule::SlotIndex;
 
 /// Contiguous memory used during `execute_block` in the audio callback.
 ///
-/// The length of [`memory`] depends on the maximum number of slots in the scheduler.  Each slot is [`block_size`]d.
+/// The length of [`memory`](self.memory) depends on the maximum number of slots in the scheduler.  Each slot is [`block_size`]d.
 ///
 /// Can be transformed into a [`PoolExecutor`] for access to slots via their index.
 pub struct AudioBufferPool {
-    /// Contiguous pre-allocated block: (`buffer_count` * `block_size`)
+    /// Contiguous pre-allocated block: (`buffer_count` * [`block_size`](self.block_size))
     memory: Vec<f32>,
     pub block_size: usize,
 }
@@ -42,7 +42,7 @@ impl AudioBufferPool {
 /// A short-lived handle for zero-allocation, arbitrary buffer slicing
 ///
 /// # Safety
-/// This is the most unsafe part of the [`Engine`]. However, it can be used safely provided the invariants are held:
+/// This is the most unsafe part of the [`Engine`](super::super::Engine). However, it can be used safely provided the invariants are held:
 ///
 /// ONLY 1 thread may access each slot in the `PoolExecutor` at a time. Currently, this is possible because the audio callback is single threaded, and therefore no cross-thread aliasing can happen.
 ///
@@ -64,7 +64,7 @@ impl PoolExecutor {
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);
-            std::slice::from_raw_parts(self.ptr.add(offset), self.block_size)
+            core::slice::from_raw_parts(self.ptr.add(offset), self.block_size)
         }
     }
 
@@ -77,7 +77,7 @@ impl PoolExecutor {
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);
-            std::slice::from_raw_parts_mut(self.ptr.add(offset), self.block_size)
+            core::slice::from_raw_parts_mut(self.ptr.add(offset), self.block_size)
         }
     }
 }

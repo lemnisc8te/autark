@@ -4,8 +4,8 @@
 //! This API offers great flexibilty, including the ability to use `libautark` programmatically, within a UI, or something else entirely!
 //!
 //! The library is roughly split into two parts:
-//! - [`engine`](crate::engine) defines the execution-related aspects of the library
-//! - [`model`](crate::model) defines the information-related aspects of the library
+//! - [`engine`] defines the execution-related aspects of the library
+//! - [`model`] defines the information-related aspects of the library
 pub mod engine;
 pub mod model;
 
@@ -37,9 +37,9 @@ use crate::{
 use anyhow::Result;
 use engine::Engine;
 use futures::FutureExt;
-pub async fn demo() -> Result<()> {
+
+async fn demo() -> Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
-    CRATE_PATH;
     let engine = {
         let project = ProjectData::new();
         Engine::new(project).unwrap()
@@ -125,7 +125,6 @@ pub async fn demo() -> Result<()> {
         })
         .await?;
 
-    "Here";
     let clap_asset = engine
         .get(LoadAudioAsset(
             format!("{CRATE_PATH}/assets/clap.mp3").into(),

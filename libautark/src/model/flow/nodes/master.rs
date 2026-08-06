@@ -1,5 +1,5 @@
 use crate::{
-    engine::{SlotIndex, tick::Tick, util::abp::PoolExecutor},
+    engine::{Tick, schedule::SlotIndex, util::abp::PoolExecutor},
     model::{
         DataKind,
         flow::{Node, Socket},

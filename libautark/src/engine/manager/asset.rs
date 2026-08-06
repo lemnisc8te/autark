@@ -1,19 +1,16 @@
-//! Asset loading — the one place symphonia is used. Fully in-memory decode;
-//! streaming/paging would only change this function's internals.
+//! Asset loading
 
 use anyhow::Result;
+use core::marker::PhantomData;
 use slotmap::SlotMap;
 use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::watch;
 
 use crate::{
-    engine::{
-        manager::{Actor, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset},
-        util::workerpool::WorkerPool,
-    },
+    engine::manager::{Actor, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset},
     model::{
-        Audio, Kind, Location,
+        Audio, Kind,
         asset::{AssetData, AudioAsset, AudioAssetID, AudioAssetPayload},
     },
 };
@@ -35,41 +32,44 @@ use symphonia::core::{
 
 pub mod commands;
 
-pub trait AssetSlot<K: Kind>: Sized
+/// A trait that defines a slot in the `SlotMap` managed by the [`AssetRegistry`] containing assets that will eventually become available.
+
+#[derive(Clone)]
+/// A slot containing an [`K::Asset`] that will eventually become available.
+pub struct AssetSlot<K: Kind>
 where
-    K::Asset: Clone,
+    <K as Kind>::Asset: Clone,
 {
-    fn new(data: AssetData<K::Asset>) -> Self;
-    fn get_watch(&self) -> watch::Sender<AssetData<K::Asset>>;
+    /// The watch channel that can be `await`ed for an asset
+    pub watch: watch::Sender<AssetData<<K as Kind>::Asset>>,
+    _p: PhantomData<K>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AudioAssetSlot {
-    pub watch: watch::Sender<AssetData<AudioAsset>>,
-}
-
-impl AssetSlot<Audio> for AudioAssetSlot {
-    fn new(data: AssetData<AudioAsset>) -> Self {
+impl<K: Kind> AssetSlot<K>
+where
+    <K as Kind>::Asset: Clone,
+{
+    fn new(data: AssetData<<K as Kind>::Asset>) -> Self {
         Self {
             watch: watch::Sender::new(data),
+            _p: PhantomData,
         }
-    }
-
-    fn get_watch(&self) -> watch::Sender<AssetData<<Audio as Kind>::Asset>> {
-        self.watch.clone()
     }
 }
 
+#[derive(Default)]
+/// The `AssetRegistry` contains all the assets within a session.
+///
+/// Each asset [`Kind`] is split into a different [`SlotMap`], mapping that `Kind`'s `<Asset as Stored>::ID`s to an `AssetSlot`
 pub struct AssetRegistry {
-    pub audio: SlotMap<AudioAssetID, AudioAssetSlot>,
-    pub io_pool: WorkerPool,
+    /// Audio assets
+    pub audio: SlotMap<AudioAssetID, AssetSlot<Audio>>,
 }
 
 impl AssetRegistry {
     fn new() -> Self {
         Self {
             audio: Default::default(),
-            io_pool: WorkerPool::new(),
         }
     }
 
@@ -133,7 +133,7 @@ impl AssetRegistry {
             Self::resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
         let len = resampled.len();
         let audio_asset = AudioAsset {
-            payload: AudioAssetPayload::Resident(Arc::from(resampled)),
+            payload: AudioAssetPayload::ResidentInterleaved(Arc::from(resampled)),
             channels,
             sample_rate: target_sample_rate,
             gain: 1.0,
@@ -146,7 +146,7 @@ impl AssetRegistry {
     /// Sinc-interpolated resample of interleaved f32 samples, with proper
     /// anti-aliasing filtering. Import-time only — never called from the
     /// audio thread, so the allocations inside rubato's `process()` are fine.
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss
@@ -199,10 +199,6 @@ impl AssetRegistry {
 pub struct AssetActor {
     reg: AssetRegistry,
     loopback: Handle<Self>,
-}
-
-impl Location for AssetActor {
-    type Data = Self;
 }
 
 impl HasHandle<Self> for AssetActor {

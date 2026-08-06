@@ -1,6 +1,8 @@
+//!
 use anyhow::Result;
 use async_trait::async_trait;
-use std::{marker::PhantomData, sync::Arc};
+use core::marker::PhantomData;
+use std::sync::Arc;
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, oneshot};
 
 pub mod asset;

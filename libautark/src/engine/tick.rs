@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Atomic unit of time within the engine.
+/// Atomic unit of time within the [`Engine`](super::Engine).
 ///
-/// Because currently 1 [`Tick`] = 1 sample, the number of ticks/sec depends on the sample rate of the [`Engine`].
-/// This means that [`Tick`]s from different [`Engine`]s are NOT guaranteed to be the same
+/// Because currently 1 [`Tick`] = 1 sample, the number of ticks/sec depends on the sample rate of the [`Engine`](super::Engine).
+/// This means that [`Tick`]s from different [`Engine`](super::Engine)s are NOT guaranteed to be the same
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tick(pub u64);
 
@@ -35,7 +35,7 @@ impl From<usize> for Tick {
     }
 }
 
-impl std::ops::Add for Tick {
+impl core::ops::Add for Tick {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -43,7 +43,7 @@ impl std::ops::Add for Tick {
     }
 }
 
-impl std::ops::Sub for Tick {
+impl core::ops::Sub for Tick {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {

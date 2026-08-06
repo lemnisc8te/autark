@@ -1,14 +1,12 @@
-use std::{
-    any::Any,
-    collections::{BTreeMap, HashMap, HashSet},
-};
+use core::any::Any;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     engine::{
-        CompiledGraph, ScheduleStep, SlotIndex,
         constants::{MAX_BUFFER_SLOTS, MAX_NODES},
         errors::EngineError,
         manager::{Handle, asset::AssetActor},
+        schedule::{CompiledGraph, ScheduleStep, SlotIndex},
         state::GraphUpdate,
         tick::Tick,
     },
@@ -38,31 +36,38 @@ use slotmap::SlotMap;
 ///
 /// See [`ProjectHistory`]
 pub struct ProjectData {
+    /// Audio track data storage
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
+    /// Audio clip data storage
     pub clips: SlotMap<AudioClipID, AudioClip>,
+    /// The `flow` `NodeGraph` for this project
     pub graph: NodeGraph,
-    pub master_node_id: NodeID,
 }
 
 impl ProjectData {
     #[must_use]
+    /// Create a new `ProjectData`
     pub fn new() -> Self {
-        let mut graph = NodeGraph::default();
+        let graph = NodeGraph::new();
 
-        let master_node = Master;
-        let master_node_id = graph.add_node(master_node);
         Self {
             tracks: SlotMap::with_key(),
             clips: SlotMap::with_key(),
             graph,
-            master_node_id,
         }
     }
 
-    pub fn remove_link(&mut self, from: OutputSocketID, to: InputSocketID) -> Result<()> {
-        self.graph.remove_link(from, to)
+    /// Remove a link between `from` and `to`.
+    ///
+    pub fn remove_link(&mut self, from: OutputSocketID, to: InputSocketID) {
+        self.graph.remove_link(from, to);
     }
 
+    /// .
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if .
     pub fn add_link(
         &mut self,
         from_id: OutputSocketID,
@@ -87,8 +92,8 @@ impl ProjectData {
             .ok_or(EngineError::TrackNotFound)?;
         track.clips_mut().retain(|_, &mut id| id != clip);
         track.clips_mut().insert(new_start, clip);
-        if let Some(c) = K::Clip::access_mut(self).get_mut(clip) {
-            *c.start_mut() = new_start;
+        if let Some(clip) = K::Clip::access_mut(self).get_mut(clip) {
+            *clip.start_mut() = new_start;
         }
         Ok(())
     }
@@ -176,6 +181,13 @@ impl ProjectData {
             .ok_or(EngineError::SocketNotFound(endpoint).into())
     }
 
+    /// Compile the graph.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if
+    /// 1. Topological sort fails
+    /// 2. The `capture_id` is invalid
     pub fn compile_graph(
         &self,
         filter: Option<&[NodeID]>,
@@ -224,21 +236,20 @@ impl ProjectData {
                 output_slots,
             });
         }
-        buffer_count;
 
-        let master_output_slot = self
+        let capture_slot = self
             .graph
             .node_output_sockets
             .get(capture_id)
             .and_then(|outs| outs.first())
             .and_then(|&id| socket_slot.get(&id))
             .copied()
-            .ok_or(EngineError::NodeNotFound(self.master_node_id))?;
+            .ok_or(EngineError::NodeNotFound(capture_id))?;
 
         Ok(CompiledGraph {
             steps,
             buffer_count,
-            capture_slot: master_output_slot,
+            capture_slot,
         })
     }
 }
@@ -264,6 +275,7 @@ pub struct ProjectHistory {
 
 impl ProjectHistory {
     #[must_use]
+    /// Create a new `ProjectHistory`
     pub fn new(current: ProjectData) -> Self {
         Self {
             current,
@@ -274,34 +286,46 @@ impl ProjectHistory {
     }
 
     #[must_use]
+    /// Get a shared reference to the current `ProjectData`
     pub const fn project(&self) -> &ProjectData {
         &self.current
     }
 
+    /// Get an exclusive mutable reference to the current `ProjectData`
     pub const fn project_mut(&mut self) -> &mut ProjectData {
         &mut self.current
     }
+
+    /// Revert the `current` `ProjectData` to the top of the `undo_stack`
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             self.redo_stack
-                .push(std::mem::replace(&mut self.current, prev));
+                .push(core::mem::replace(&mut self.current, prev));
         }
     }
 
+    /// Revert the `current` `ProjectData` to the top of the `redo_stack`
     pub fn redo(&mut self) {
         if let Some(next) = self.redo_stack.pop() {
             self.undo_stack
-                .push(std::mem::replace(&mut self.current, next));
+                .push(core::mem::replace(&mut self.current, next));
         }
     }
 
+    /// Add a new entry to the `undo_stack` and clear the `redo_stack`
     pub fn commit(&mut self, next: ProjectData) {
-        let previous_commit = std::mem::replace(&mut self.current, next);
+        let previous_commit = core::mem::replace(&mut self.current, next);
         self.undo_stack.push(previous_commit);
         self.redo_stack.clear();
     }
 
     /// Builds the next `GraphUpdate`
+    ///
+    /// # Errors
+    /// This function will return an error if
+    /// 1. Topological sort fails
+    /// 2. The `master_node_id` is invalid
+    /// 3. The graph is too large for the real-time budget
     pub async fn publish_current(
         &mut self,
         asset_h: &Handle<AssetActor>,
@@ -309,7 +333,7 @@ impl ProjectHistory {
     ) -> Result<GraphUpdate> {
         let schedule = self
             .project()
-            .compile_graph(filter, self.current.master_node_id)?;
+            .compile_graph(filter, self.current.graph.master_node_id)?;
 
         if schedule.buffer_count > MAX_BUFFER_SLOTS || self.project().graph.nodes.len() > MAX_NODES
         {
@@ -328,7 +352,7 @@ impl ProjectHistory {
         let state_additions = join_all(state_additions).await;
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
-        let _ = std::mem::replace(&mut self.known_node_ids, new_ids);
+        let _ = core::mem::replace(&mut self.known_node_ids, new_ids);
         Ok(GraphUpdate {
             schedule,
             state_additions,

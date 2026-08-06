@@ -1,3 +1,4 @@
+//! Error-related types for use in the Engine
 use thiserror::Error;
 
 use crate::model::{
@@ -6,6 +7,8 @@ use crate::model::{
 };
 
 #[derive(Debug, Error)]
+#[expect(missing_docs)]
+/// Errors created by the [`Engine`]
 pub enum EngineError {
     #[error("Track was not found")]
     TrackNotFound,

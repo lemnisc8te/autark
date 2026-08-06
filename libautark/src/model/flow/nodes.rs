@@ -3,3 +3,4 @@ pub mod duplicate;
 pub mod master;
 pub mod sum;
 pub mod trackreader;
+pub mod utility;

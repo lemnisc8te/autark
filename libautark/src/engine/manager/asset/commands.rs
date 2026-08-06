@@ -1,3 +1,5 @@
+//! Implementors of [`Command`] operating on an [`AssetActor`]
+
 use super::AssetActor;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -11,6 +13,7 @@ use crate::{
     model::asset::{AssetData, AudioAsset, AudioAssetID},
 };
 
+/// Subscribe to an [`AudioAsset`], receiving a `[tokio::sync::watch]` channel that can be awaited to recieve the asset once it has finished loading.
 pub struct SubscribeAudioAsset(pub AudioAssetID);
 
 impl Command<Query> for SubscribeAudioAsset {
@@ -22,6 +25,7 @@ impl Command<Query> for SubscribeAudioAsset {
     }
 }
 
+/// Asynchronously wait for an [`AudioAsset`] to finish loading.
 pub struct WaitForAudioAsset(pub AudioAssetID);
 
 impl Command<Query> for WaitForAudioAsset {
@@ -31,7 +35,7 @@ impl Command<Query> for WaitForAudioAsset {
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         let mut rx = actor.reg.audio.get(self.0).unwrap().watch.subscribe();
         rx.wait_for(|data| match data {
-            AssetData::Ready(_) | AssetData::Failed => true,
+            AssetData::Ready(_) | AssetData::Failed(_) => true,
             AssetData::Pending => false,
         })
         .await?;
@@ -39,12 +43,15 @@ impl Command<Query> for WaitForAudioAsset {
         // Extract the final value after the runtime finishes blocking
         match *rx.borrow() {
             AssetData::Ready(ref asset) => Ok(asset.clone()),
-            AssetData::Failed => anyhow::bail!("asset {:?} failed to load", self.0),
+            AssetData::Failed(ref err) => anyhow::bail!("asset {:?} failed to load: {err}", self.0),
             AssetData::Pending => unreachable!(),
         }
     }
 }
 
+/// Spawn a blocking task to load an audio asset.
+///
+/// Immediately returns an [`AudioAssetID`] that can be used with [`WaitForAudioAsset`] to get the `[AudioAsset]` itself.
 pub struct LoadAudioAsset(pub PathBuf, pub u32);
 
 impl Command<Modify> for LoadAudioAsset {
@@ -60,7 +67,7 @@ impl Command<Modify> for LoadAudioAsset {
             let slot = actor.reg.audio.get_mut(new_key).unwrap();
             let data_status = match result {
                 Ok(asset) => AssetData::Ready(asset),
-                Err(_) => AssetData::Failed,
+                Err(err) => AssetData::Failed(err),
             };
             slot.watch.send_modify(|status| *status = data_status);
         };

@@ -1,68 +1,89 @@
 //! The core audio engine. Used to manipulate `Project`s, hold the audio thread, and more.
 pub mod constants;
-pub mod engineconfig;
 pub mod errors;
 pub mod manager;
+pub mod schedule;
 pub mod state;
 pub mod tick;
 pub mod transport;
 pub mod util;
 
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, atomic::AtomicU64};
+pub use tick::Tick;
 
 use crate::engine::manager::{HasHandle, MultithreadManager, Permission};
 use crate::{
     engine::{
         constants::DEFAULT_MANAGER_CAPACITY,
-        engineconfig::EngineConfig,
         manager::{
             Handle, IntoEnvelope, Manager, StdManager,
             asset::AssetActor,
             audio::{AudioActor, UpdateCmd},
             project::{ProjectActor, commands::meta::Publish},
         },
-        tick::Tick,
     },
-    model::{
-        flow::{ErasedNode, NodeID},
-        project::ProjectData,
-    },
+    model::{flow::NodeID, project::ProjectData},
 };
 
-use anyhow::Result;
+use core::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-pub type SlotIndex = usize;
+use anyhow::Result;
+use cpal::{Device, Host};
+use cpal::{SampleFormat, StreamConfig};
 
 #[derive(Clone)]
-pub struct ScheduleStep {
-    pub node: Arc<dyn ErasedNode>,
-    pub node_id: NodeID,
-    pub input_slots: Vec<SlotIndex>,
-    pub output_slots: Vec<SlotIndex>,
+pub struct EngineConfig {
+    host: Arc<Host>,
+    device: Arc<Device>,
+    config: StreamConfig,
+    sample_format: SampleFormat,
 }
 
-#[derive(Default, Clone)]
-pub struct CompiledGraph {
-    pub steps: Vec<ScheduleStep>,
-    pub buffer_count: usize,
-    pub capture_slot: SlotIndex,
+impl EngineConfig {
+    /// Create a new `EngineConfig`.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if there is no audio output device, the device has been disconnected, the outptu device has no default configuration, or the device selected is not an output device.
+    pub fn create() -> Result<Self> {
+        use anyhow::Context;
+        use cpal::traits::{DeviceTrait, HostTrait};
+
+        let host = Arc::new(cpal::default_host());
+        let device = Arc::new(host.default_output_device().context("no output device")?);
+        let supported = device.default_output_config()?;
+        let sample_format = supported.sample_format();
+        let sample_rate = supported.sample_rate();
+        let channels = supported.channels();
+        let config: StreamConfig = supported.into();
+        println!(
+            "output device config: sr: {sample_rate} Hz, {channels} ch, format {sample_format:?}"
+        );
+        Ok(Self {
+            host,
+            device,
+            config,
+            sample_format,
+        })
+    }
 }
 
+/// The heart of it all, the `Engine`. Manages the [`Actor`](manager::Actor)s, the audio thread, garbage thread, and playhead.
 pub struct Engine {
+    /// The current location of the playhead. Is `Arc` so it can be shared with the audio thread.
     pub playhead: Arc<AtomicU64>,
+    /// Engine Configuration
     config: EngineConfig,
+    /// Handles to the actors
     asset_h: Handle<AssetActor>,
+    /// Ditto
     project_h: Handle<ProjectActor>,
+    /// Ditto
     audio_h: Handle<AudioActor>,
 }
 
 impl Engine {
     /// .
-    ///
-    /// # Panics
-    ///
-    /// Panics if .
     ///
     /// # Errors
     ///
@@ -119,20 +140,17 @@ impl Engine {
 
 impl HasHandle<ProjectActor> for Engine {
     fn handle(&self) -> &Handle<ProjectActor> {
-        // dbg!("Getting project_h");
         &self.project_h
     }
 }
 impl HasHandle<AssetActor> for Engine {
     fn handle(&self) -> &Handle<AssetActor> {
-        // dbg!("Getting asset_h");
         &self.asset_h
     }
 }
 
 impl HasHandle<AudioActor> for Engine {
     fn handle(&self) -> &Handle<AudioActor> {
-        // dbg!("Getting audio_h");
         &self.audio_h
     }
 }

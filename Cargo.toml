@@ -26,6 +26,7 @@ missing_docs = "warn"
 fallible_impl_from = "forbid"
 used_underscore_items = "forbid"
 undocumented_unsafe_blocks = "forbid"
+allow_attributes = "forbid"
 
 # Deny
 pedantic = "deny"
@@ -51,6 +52,8 @@ unwrap_in_result = "warn"
 large_stack_frames = "warn"
 panic = "warn"
 dbg_macro = "warn"
+std_instead_of_core = "warn"
+large_future = "warn"
 
 # Allowed
 default_trait_access = "allow"

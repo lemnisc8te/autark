@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::{
     engine::{
@@ -168,13 +168,13 @@ pub struct RemoveLink {
 impl ProjectCommand for RemoveLink {}
 
 impl Command<Modify> for RemoveLink {
-    type Output = Result<()>;
+    type Output = ();
     type Actor = ProjectActor;
 
     async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().remove_link(self.from, self.to))
-            .await
+            .await;
     }
 }
 

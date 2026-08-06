@@ -19,7 +19,7 @@ impl Command<Query> for GetMasterNodeId {
 
     async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async |proj| proj.project().master_node_id)
+            .query(async |proj| proj.project().graph.master_node_id)
             .await
     }
 }

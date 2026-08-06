@@ -1,4 +1,6 @@
-use std::hash::Hash;
+//! Defines project data structure, [`Node`](flow::Node)s, and more.
+
+use core::hash::Hash;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
@@ -10,7 +12,7 @@ use crate::{
             clip::{AudioClip, Clip},
             track::{AudioTrack, Track},
         },
-        asset::AudioAsset,
+        asset::{Asset, AudioAsset},
     },
 };
 
@@ -20,29 +22,40 @@ pub mod flow;
 pub mod project;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines the core 3 data formats.
 pub enum DataKind {
+    /// Audio data
     Audio,
+    /// Midi data
     Midi,
+    /// Control data
+    /// Essentially `DataKind::Audio`, but isn't intended for listening/final output
     Cv,
 }
 
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
+/// A `Kind`, used for audio data (see `DataKind::Audio`)
 pub struct Audio;
 
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
+/// A `Kind`, used for MIDI data (see `DataKind::Midi`)
 pub struct Midi;
 
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
+/// A `Kind`, used for control data (see `DataKind::Cv`)
 pub struct Cv;
 
+/// A trait parallel to the [`DataKind`] enum.
+///
+/// This is used to provide type-safe guarantees about the `Kind` of various objects.
 pub trait Kind:
-    std::fmt::Debug
+    core::fmt::Debug
     + Clone
     + Copy
     + Default
@@ -57,10 +70,14 @@ pub trait Kind:
     + Sync
     + 'static
 {
-    type Asset: Stored;
+    /// The `Asset` type of this `Kind`
+    type Asset: Asset<Self> + Stored;
+    /// The `Clip` type of this `Kind`
     type Clip: Clip<Self> + Stored<Storage = Self::Clip>;
+    /// The `Track` type of this `Kind`
     type Track: Track<Self> + Stored<Storage = Self::Track>;
 
+    /// Convert this `Kind` into its corresponding `DataKind` variant
     fn into_datakind() -> DataKind;
 }
 
@@ -76,6 +93,7 @@ impl Kind for Audio {
 
 impl DataKind {
     #[must_use]
+    /// Defines permissible socket connections between Kinds
     pub fn can_connect_to(self, dest: Self) -> bool {
         self == dest || (self == Self::Audio && dest == Self::Cv)
     }
@@ -89,10 +107,6 @@ pub struct RenderBlock<'b> {
 
 pub trait Renderable: Send {
     fn render(&self, block: &mut RenderBlock);
-}
-
-pub trait Location {
-    type Data;
 }
 
 pub trait Stored: Sized {

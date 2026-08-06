@@ -1,17 +1,11 @@
 //! Module for Flow related types
-use std::{
-    any::Any,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
-};
+use core::any::Any;
 
 use dyn_clone::DynClone;
 use slotmap::new_key_type;
 
 use crate::{
-    engine::{SlotIndex, tick::Tick, util::abp::PoolExecutor},
+    engine::{schedule::SlotIndex, tick::Tick, util::abp::PoolExecutor},
     model::flow::socket::{InputSocketID, Socket},
 };
 
@@ -23,26 +17,54 @@ new_key_type! {
     pub struct NodeID;
 }
 
-#[derive(Debug, Clone)]
-pub struct Param(Arc<AtomicU32>); // f32 via to_bits/from_bits
+// mod param {
+//     use core::sync::atomic::Ordering;
 
-impl Param {
-    #[must_use]
-    pub fn new(v: f32) -> Self {
-        Self(Arc::new(AtomicU32::new(v.to_bits())))
-    }
-    #[inline]
-    #[must_use]
-    pub fn get(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
-    }
-    #[inline]
-    pub fn set(&self, v: f32) {
-        self.0.store(v.to_bits(), Ordering::Relaxed);
-    }
-}
+//     use core::sync::atomic::AtomicU32;
 
-pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
+//     use std::sync::Arc;
+//     use std::sync::atomic::AtomicBool;
+
+//     #[derive(Debug, Clone)]
+//     pub struct ParamF32(Arc<AtomicU32>);
+
+//     impl ParamF32 {
+//         #[must_use]
+//         pub fn new(v: f32) -> Self {
+//             Self(Arc::new(AtomicU32::new(v.to_bits())))
+//         }
+//         #[inline]
+//         #[must_use]
+//         pub fn get(&self) -> f32 {
+//             f32::from_bits(self.0.load(Ordering::Relaxed))
+//         }
+//         #[inline]
+//         pub fn set(&self, v: f32) {
+//             self.0.store(v.to_bits(), Ordering::Relaxed);
+//         }
+//     }
+
+//     #[derive(Debug, Clone)]
+//     pub struct ParamBool(Arc<AtomicBool>);
+
+//     impl ParamBool {
+//         #[must_use]
+//         pub fn new(v: f32) -> Self {
+//             Self(Arc::new(AtomicU32::new(v.to_bits())))
+//         }
+//         #[inline]
+//         #[must_use]
+//         pub fn get(&self) -> f32 {
+//             f32::from_bits(self.0.load(Ordering::Relaxed))
+//         }
+//         #[inline]
+//         pub fn set(&self, v: f32) {
+//             self.0.store(v.to_bits(), Ordering::Relaxed);
+//         }
+//     }
+// }
+
+pub trait Node: core::fmt::Debug + DynClone + Send + Sync + 'static {
     type State: Send + 'static;
 
     fn spec_in(&self) -> Vec<Socket>;
@@ -72,7 +94,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
 
 pub trait MultiInputNode: ErasedNode {}
 
-pub trait ErasedNode: std::fmt::Debug + DynClone + Send + Sync + 'static {
+pub trait ErasedNode: core::fmt::Debug + DynClone + Send + Sync + 'static {
     fn spawn_state(&self) -> Box<dyn Any + Send>;
     fn process_erased(
         &self,
