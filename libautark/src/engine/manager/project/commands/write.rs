@@ -1,3 +1,5 @@
+//! Write-capable commands for the [`ProjectActor`]
+
 use anyhow::{Result, anyhow};
 use core::marker::PhantomData;
 
@@ -5,7 +7,7 @@ use crate::{
     engine::{
         asset::AssetActor,
         manager::{ActorRef, Command, Permission, Write, project::ProjectActor},
-        state::GraphUpdate,
+        state::LiveUpdate,
         tick::Tick,
     },
     model::{
@@ -19,6 +21,7 @@ use crate::{
     },
 };
 
+#[expect(missing_docs)]
 pub struct AddTrack<K: Kind> {
     pub name: String,
     pub kind: K,
@@ -36,11 +39,12 @@ where
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.project_mut().add_track::<K>(self.name, self.channels))
+            .write(async |proj| proj.project_mut().add_track::<K>(self.name, self.channels))
             .await
     }
 }
 
+#[expect(missing_docs)]
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::ID);
 
 impl<K> Command<Write> for RemoveTrack<K>
@@ -55,12 +59,13 @@ where
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         {
             actor
-                .mutate(async |proj| proj.project_mut().remove_track::<K>(self.0))
+                .write(async |proj| proj.project_mut().remove_track::<K>(self.0))
                 .await
         }
     }
 }
 
+#[expect(missing_docs)]
 pub struct AddClip<K: Kind> {
     pub track_id: <K::Track as Stored>::ID,
     pub start: Tick,
@@ -79,7 +84,7 @@ where
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| {
+            .write(async |proj| {
                 proj.project_mut().add_clip_to_track::<K>(
                     self.track_id,
                     self.start,
@@ -91,6 +96,7 @@ where
     }
 }
 
+#[expect(missing_docs)]
 pub struct MoveClip<K: Kind> {
     pub track: <K::Track as Stored>::ID,
     pub clip: <K::Clip as Stored>::ID,
@@ -108,7 +114,7 @@ where
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| {
+            .write(async |proj| {
                 proj.project_mut()
                     .move_clip::<K>(self.track, self.clip, self.new_start)
             })
@@ -116,6 +122,7 @@ where
     }
 }
 
+#[expect(missing_docs)]
 pub struct AddNode<N: Node> {
     pub node: N,
 }
@@ -126,11 +133,12 @@ impl<N: Node> Command<Write> for AddNode<N> {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.project_mut().graph.add_node(self.node))
+            .write(async |proj| proj.project_mut().graph.add_node(self.node))
             .await
     }
 }
 
+#[expect(missing_docs)]
 pub struct AddLink {
     pub from: OutputSocketID,
     pub to: InputSocketID,
@@ -142,11 +150,12 @@ impl Command<Write> for AddLink {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.project_mut().add_link(self.from, self.to))
+            .write(async |proj| proj.project_mut().add_link(self.from, self.to))
             .await
     }
 }
 
+#[expect(missing_docs)]
 pub struct RemoveLink {
     pub from: OutputSocketID,
     pub to: InputSocketID,
@@ -158,11 +167,12 @@ impl Command<Write> for RemoveLink {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.project_mut().remove_link(self.from, self.to))
+            .write(async |proj| proj.project_mut().remove_link(self.from, self.to))
             .await;
     }
 }
 
+#[expect(missing_docs)]
 pub struct AddNodeInput<K: Kind> {
     pub node_id: NodeID,
     pub(crate) _p: PhantomData<K>,
@@ -170,6 +180,7 @@ pub struct AddNodeInput<K: Kind> {
 
 impl<K: Kind> AddNodeInput<K> {
     #[must_use]
+    /// Create a new [`AddNodeInput`]. Renamed for readability in context.
     pub const fn to(node_id: NodeID) -> Self {
         Self {
             node_id,
@@ -183,7 +194,7 @@ impl<K: Kind> Command<Write> for AddNodeInput<K> {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| {
+            .write(async |proj| {
                 proj.project_mut().add_input_socket_to_node(
                     self.node_id,
                     Socket::new(K::into_datakind(), "in", true),
@@ -193,6 +204,7 @@ impl<K: Kind> Command<Write> for AddNodeInput<K> {
     }
 }
 
+#[expect(missing_docs)]
 pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
@@ -203,19 +215,20 @@ impl Command<Write> for RemoveNodeInput {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| proj.project_mut().remove_node_input(self.node_id))
+            .write(async |proj| proj.project_mut().remove_node_input(self.node_id))
             .await
     }
 }
 
+/// Run a closure on the [`Track`]
 pub struct MutateTrack<K, F, T>
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send,
     T: Send,
 {
-    pub func: F,
-    pub id: <K::Track as Stored>::ID,
+    func: F,
+    id: <K::Track as Stored>::ID,
     pub(crate) _k: PhantomData<K>,
     pub(crate) _t: PhantomData<T>,
 }
@@ -232,7 +245,7 @@ where
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .mutate(async |proj| {
+            .write(async |proj| {
                 let the_ref = K::Track::access_mut(proj)
                     .get_mut(self.id)
                     .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
@@ -242,19 +255,23 @@ where
     }
 }
 
+/// Get the latest [`LiveUpdate`]
+#[expect(missing_docs)]
 pub struct Publish {
     pub asset_h: ActorRef<AssetActor>,
     pub filter: Option<Vec<NodeID>>,
 }
 
 impl Command<Write> for Publish {
-    type Output = Result<GraphUpdate>;
+    type Output = Result<LiveUpdate>;
     type Actor = ProjectActor;
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .data
-            .publish_current(&self.asset_h, self.filter.as_deref())
+            .write(async |proj| {
+                proj.publish_current(&self.asset_h, self.filter.as_deref())
+                    .await
+            })
             .await
     }
 }

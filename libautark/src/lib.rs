@@ -1,6 +1,6 @@
 //! Autark is an experimental audio tool designed to create interesting and beautiful sounds.
 //!
-//! [`libautark`](module@libautark) is the library that provides backend functionality. It uses a [`Command`](engine::Command)-based API to interface with an [`Engine`].
+//! libautark is the library that provides backend functionality. It uses a [`Command`](engine::manager::Command)-based API to interface with an [`Engine`].
 //! This API offers great flexibilty, including the ability to use `libautark` programmatically, within a UI, or something else entirely!
 //!
 //! The library is roughly split into two parts:
@@ -34,6 +34,8 @@ use anyhow::Result;
 use engine::Engine;
 use futures::FutureExt;
 
+#[doc(hidden)]
+#[expect(clippy::too_many_lines)]
 pub async fn demo() -> Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
     let engine = {

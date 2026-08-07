@@ -1,3 +1,4 @@
+//! A UI application that uses [`libautark`] to create a DAW.
 use libautark::demo;
 
 #[tokio::main]

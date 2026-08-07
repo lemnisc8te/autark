@@ -3,7 +3,7 @@ use crate::engine::schedule::SlotIndex;
 
 /// Contiguous memory used during `execute_block` in the audio callback.
 ///
-/// The length of [`memory`](self.memory) depends on the maximum number of slots in the scheduler.  Each slot is [`block_size`]d.
+/// The length of [`memory`](self.memory) depends on the maximum number of slots in the scheduler.  Each slot is [`block_size`](self.block_size)d.
 ///
 /// Can be transformed into a [`PoolExecutor`] for access to slots via their index.
 pub struct AudioBufferPool {

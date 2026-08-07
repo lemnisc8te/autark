@@ -8,14 +8,14 @@ use crate::{
 };
 
 #[derive(Default)]
-pub struct GraphUpdate {
+pub struct LiveUpdate {
     pub schedule: CompiledSchedule,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,
 }
 
 pub enum Garbage {
-    Update(GraphUpdate),
+    Update(LiveUpdate),
     NodeState(Box<dyn Any + Send>),
 }
 
@@ -46,7 +46,7 @@ impl NodeStatePool {
     /// removes stale entries (routing them to `garbage` instead of dropping
     /// them here). No allocation: `SecondaryMap` was pre-sized to
     /// `MAX_NODES`, so inserting keys under that bound never reallocates.
-    pub fn apply(&mut self, update: &mut GraphUpdate, garbage: &mut rtrb::Producer<Garbage>) {
+    pub fn apply(&mut self, update: &mut LiveUpdate, garbage: &mut rtrb::Producer<Garbage>) {
         for (id, state) in update.state_additions.drain(..) {
             self.states.insert(id, state);
         }

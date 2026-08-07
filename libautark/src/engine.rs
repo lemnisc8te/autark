@@ -15,7 +15,7 @@ pub use manager::{
 };
 pub use tick::Tick;
 
-/// Helper to group these "pub use"s as commands
+#[expect(missing_docs)]
 pub mod commands {
     pub use super::manager::{Command, asset::commands::*, audio::*, project::commands::*};
 }
@@ -24,7 +24,7 @@ use crate::{
     engine::{
         asset::AssetActor,
         audio::AudioActor,
-        commands::{Publish, UpdateCmd},
+        commands::{Publish, UpdateLive},
         constants::DEFAULT_MANAGER_CAPACITY,
         manager::Command,
         project::ProjectActor,
@@ -128,7 +128,7 @@ impl Engine {
             })
             .await
             .unwrap();
-        self.audio_h.call(UpdateCmd(update)).await;
+        self.audio_h.call(UpdateLive(update)).await;
     }
 
     #[must_use]

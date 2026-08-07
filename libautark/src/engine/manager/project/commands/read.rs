@@ -1,3 +1,5 @@
+//! Read-only commands for the [`ProjectActor`]
+
 use crate::{
     engine::manager::{Command, Permission, Read, project::ProjectActor},
     model::flow::{
@@ -6,6 +8,7 @@ use crate::{
     },
 };
 
+#[expect(missing_docs)]
 pub struct GetMasterNodeId;
 
 impl Command<Read> for GetMasterNodeId {
@@ -14,11 +17,12 @@ impl Command<Read> for GetMasterNodeId {
 
     async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async |proj| proj.project().graph.master_node_id)
+            .read(async |proj| proj.project().graph.master_node_id)
             .await
     }
 }
 
+#[expect(missing_docs)]
 pub struct InputSocketOf(pub NodeID, pub usize);
 
 impl Command<Read> for InputSocketOf {
@@ -27,11 +31,12 @@ impl Command<Read> for InputSocketOf {
 
     async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async move |proj| proj.project().graph.inputs_of(self.0)[self.1])
+            .read(async move |proj| proj.project().graph.inputs_of(self.0)[self.1])
             .await
     }
 }
 
+#[expect(missing_docs)]
 pub struct OutputSocketOf(pub NodeID, pub usize);
 
 impl Command<Read> for OutputSocketOf {
@@ -40,7 +45,7 @@ impl Command<Read> for OutputSocketOf {
 
     async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .query(async move |proj| proj.project().graph.outputs_of(self.0)[self.1])
+            .read(async move |proj| proj.project().graph.outputs_of(self.0)[self.1])
             .await
     }
 }

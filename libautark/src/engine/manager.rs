@@ -10,7 +10,7 @@ pub mod asset;
 pub mod audio;
 pub mod project;
 
-/// A data-containing object representing some state within the [`Engine`].
+/// A data-containing object representing some state within the [`Engine`](crate::engine::Engine).
 pub trait Actor: Send + Sync + Sized + 'static {
     /// The type of the parameter used to initialize an instance of this [`Actor`].
     type InitParam: Send;
@@ -29,22 +29,29 @@ pub trait Actor: Send + Sync + Sized + 'static {
     fn on_stop(&self) {}
 }
 
+/// Wrapper type for writing reading/writing envelopes
+#[expect(missing_docs)]
 pub enum Delivery<A: Actor> {
     Read(BoxedReadEnvelope<A>),
     Write(BoxedWriteEnvelope<A>),
 }
 
+/// Marker struct for read-only [`Permission`]s.
 pub struct Read;
+
+/// Marker struct for write-capable [`Permission`]s.
 pub struct Write;
 
+/// A marker trait that defines the guard (essentially `&Actor` or `&mut Actor`) passed into a `Command`.
 pub trait Permission<A: Actor>: IntoDelivery<A> + Sized + Send + 'static {
+    /// The type of the [`RwLock`] guard associated with this [`Permission`].
     type Guard: Send;
 
     /// Runs once per envelope, before `data`/`execute`. No-op for `Ref`;
     /// `Mutate`/`ActorRef` use it to commit the pre-mutation undo entry.
     fn pre_hook(_actor: &mut A) {}
 
-    /// Get the associated [`Guard`] from the [`Arc`]-d and [`RwLock`]-d [`Actor`] for this [`Permission`].
+    /// Get the associated [`Guard`](Self::Guard) from the [`Arc`]-d and [`RwLock`]-d [`Actor`] for this [`Permission`].
     fn lock(actor: Arc<RwLock<A>>) -> impl Future<Output = Self::Guard>;
 }
 
@@ -64,10 +71,12 @@ impl<A: Actor> Permission<A> for Write {
     }
 }
 
+/// Defines how to transform a [`Permission`] into a variant of [`Delivery`]
 pub trait IntoDelivery<A>
 where
     A: Actor,
 {
+    #[expect(missing_docs)]
     fn delivery<E: Envelope<A, Self> + 'static>(env: E) -> Delivery<A>
     where
         Self: Permission<A>;
@@ -91,10 +100,15 @@ where
     }
 }
 
+/// Define some logic to be performed on an [`Actor`].
 pub trait Command<P: Permission<Self::Actor>>: Sized + Send + 'static {
+    /// The output type of this [`Command`].
     type Output: Send;
+
+    /// The [`Actor`] on which this command should be executed.
     type Actor: Actor;
 
+    /// Defines the logic of this [`Command`].
     fn execute(
         self,
         actor: <P as Permission<Self::Actor>>::Guard,
@@ -110,7 +124,7 @@ trait IntoEnvelope<P: Permission<Self::Actor>>: Command<P> {
 impl<A, P, C> IntoEnvelope<P> for C
 where
     A: Actor,
-    P: Permission<A> + IntoDelivery<A>,
+    P: Permission<A>,
     C: Command<P, Actor = A>,
 {
     fn into_envelope<R>(self, reply: R) -> Delivery<Self::Actor>
@@ -153,8 +167,9 @@ impl<O: Send> ReplyPort<O> for NoReply {
 }
 
 #[async_trait]
-/// A wrapper for a [`Command`] that features a [`tokio::oneshot`] use to respond to the caller
+/// A wrapper for a [`Command`] that features a [`tokio::sync::oneshot`] use to respond to the caller
 pub trait Envelope<A: Actor, P: Permission<A>>: Send {
+    /// Execute the logic in the [`Command`] using the `handle`.
     async fn engage(self: Box<Self>, handle: P::Guard);
 }
 
@@ -228,7 +243,7 @@ pub struct ActorRef<A: Actor> {
     sender: Sender<A>,
 }
 
-/// Defines whether has an [`ActorRef`] to an [`Actor`] of type [`A`](type@A).
+/// Defines whether has an [`ActorRef<A>`] to an [`Actor`]
 pub trait HasActorRef<A: Actor> {
     #[expect(missing_docs)]
     fn get_ref(&self) -> &ActorRef<A>;
@@ -254,6 +269,10 @@ impl<A: Actor> ActorRef<A> {
     }
 
     /// Run a read-only `Command` and await its result.
+    ///
+    /// # Panics
+    ///
+    /// This functio nwill panic if sending the envelope fails, or if the actor thread dies.
     pub async fn call<C, P>(&self, command: C) -> C::Output
     where
         C: Command<P, Actor = A>,
@@ -269,6 +288,10 @@ impl<A: Actor> ActorRef<A> {
     /// Run a `Command` without waiting for (or even generating a
     /// channel for) its result. Useful for queries kept only for a side
     /// effect (logging, metrics) where the caller doesn't need the value.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if sending the envelope fails
     pub async fn notify<C, P>(&self, command: C) -> Result<()>
     where
         C: Command<P, Actor = A>,
@@ -283,7 +306,7 @@ impl<A: Actor> ActorRef<A> {
 /// restart-on-panic, metrics, tracing spans, backpressure policy, etc.,
 /// all while keeping the same `spawn` signature.i
 pub trait Manager<A: Actor> {
-    /// Spawn an instance of [`A`](type@A) onto its own [`tokio::task`].
+    /// Spawn an instance of the [`Actor`] on its own [`tokio::task`].
     ///
     /// Returns a cloneable [`ActorRef`] for sending it commands.
     fn spawn(params: A::InitParam, mailbox_capacity: usize) -> ActorRef<A>;

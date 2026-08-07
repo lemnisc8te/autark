@@ -35,7 +35,7 @@ pub mod commands;
 /// A trait that defines a slot in the `SlotMap` managed by the [`AssetRegistry`] containing assets that will eventually become available.
 
 #[derive(Clone)]
-/// A slot containing an [`K::Asset`] that will eventually become available.
+/// A slot containing an [`K::Asset`](Kind::Asset) that will eventually become available.
 pub struct AssetSlot<K: Kind>
 where
     <K as Kind>::Asset: Clone,
@@ -196,6 +196,7 @@ impl AssetRegistry {
     }
 }
 
+/// The [`Actor`] in charge of the [`AssetRegistry`].
 pub struct AssetActor {
     reg: AssetRegistry,
     loopback: ActorRef<Self>,

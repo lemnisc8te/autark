@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::model::flow::{ErasedNode, NodeID};
 
-/// Alias for a [`usize`] that is intended to reference a buffer in an [`AudioBufferPool`](crate::engine::util::apb::AudioBufferPool)
+/// Alias for a [`usize`] that is intended to reference a buffer in an [`AudioBufferPool`](crate::engine::util::abp::AudioBufferPool)
 pub type SlotIndex = usize;
 
 #[derive(Clone)]

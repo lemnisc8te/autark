@@ -10,7 +10,7 @@ use crate::{
         constants::{MAX_BUFFER_SLOTS, MAX_NODES},
         errors::EngineError,
         schedule::{CompiledSchedule, ScheduleStep, SlotIndex},
-        state::GraphUpdate,
+        state::LiveUpdate,
         tick::Tick,
     },
     model::{
@@ -330,7 +330,7 @@ impl ProjectHistory {
         &mut self,
         asset_h: &ActorRef<AssetActor>,
         filter: Option<&[NodeID]>,
-    ) -> Result<GraphUpdate> {
+    ) -> Result<LiveUpdate> {
         let schedule = self
             .project()
             .compile_graph(filter, self.current.graph.master_node_id)?;
@@ -353,7 +353,7 @@ impl ProjectHistory {
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
         let _ = core::mem::replace(&mut self.known_node_ids, new_ids);
-        Ok(GraphUpdate {
+        Ok(LiveUpdate {
             schedule,
             state_additions,
             state_removals,

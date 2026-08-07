@@ -12,7 +12,7 @@ use crate::engine::{
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     manager::{Actor, ActorRef, Command, HasActorRef, Permission, Write},
     schedule::CompiledSchedule,
-    state::{Garbage, GraphUpdate, NodeStatePool},
+    state::{Garbage, LiveUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
     util::abp::AudioBufferPool,
@@ -28,23 +28,32 @@ pub struct SyncProducer<T>(pub rtrb::Producer<T>);
 // at a time, fulfilling the single-producer single-consumer contract safely.
 unsafe impl<T: Send> Sync for SyncProducer<T> {}
 
+/// The [`Actor`] for the audio thread.
 pub struct AudioActor {
-    update_tx: SyncProducer<GraphUpdate>,
+    update_tx: SyncProducer<LiveUpdate>,
+    /// The current state of the callback [`Transport`] (playing/stopped/paused,etc.)
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
     loopback: ActorRef<Self>,
 }
 
 impl AudioActor {
+    /// Initialize the [`AudioActor`].
+    ///
+    /// This will start a [`cpal::Stream`] on a new thread.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if building the [`cpal::Stream`] fails or if playing the [`cpal::Stream`] fails.
     pub fn init(
         config: &EngineConfig,
         playhead: Arc<AtomicU64>,
         loopback: ActorRef<Self>,
     ) -> Result<Self> {
         let transport = Arc::new(Transport::new());
-        let init_update = GraphUpdate::default();
+        let init_update = LiveUpdate::default();
 
-        let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
+        let (mut update_tx, update_rx) = rtrb::RingBuffer::<LiveUpdate>::new(UPDATE_RING_CAPACITY);
         let (garbage_tx, mut garbage_rx) = rtrb::RingBuffer::<Garbage>::new(GARBAGE_RING_CAPACITY);
 
         // Seed the ring with the initial graph so the audio thread has
@@ -76,7 +85,7 @@ impl AudioActor {
         config: &EngineConfig,
         transport: Arc<Transport>,
         playhead: Arc<AtomicU64>,
-        mut update_rx: rtrb::Consumer<GraphUpdate>,
+        mut update_rx: rtrb::Consumer<LiveUpdate>,
         mut garbage_tx: rtrb::Producer<Garbage>,
     ) -> Result<cpal::Stream>
     where
@@ -88,7 +97,7 @@ impl AudioActor {
         let mut buffer_pool = AudioBufferPool::new(MAX_BUFFER_SLOTS, 1024);
 
         let mut state_pool = NodeStatePool::new();
-        let mut current: Option<GraphUpdate> = None;
+        let mut current: Option<LiveUpdate> = None;
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
@@ -109,7 +118,7 @@ impl AudioActor {
                     let frame_count = data.len() / channels as usize;
                     let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
-                    let Some(GraphUpdate { schedule, .. }) = current.as_ref() else {
+                    let Some(LiveUpdate { schedule, .. }) = current.as_ref() else {
                         return;
                     };
 
@@ -163,6 +172,7 @@ impl AudioActor {
     }
 }
 
+/// Set the [`AudioActor`]'s [`transport`](AudioActor.transport) to this [`TransportState`].
 pub struct TransportCmd(pub TransportState);
 
 impl Command<Write> for TransportCmd {
@@ -173,6 +183,7 @@ impl Command<Write> for TransportCmd {
     }
 }
 
+/// Alias to quickly set the [`AudioActor`]'s [`transport`](AudioActor.transport) to this [`Play`].
 pub struct Play;
 
 impl Command<Write> for Play {
@@ -185,9 +196,10 @@ impl Command<Write> for Play {
     }
 }
 
-pub struct UpdateCmd(pub GraphUpdate);
+/// Update the [`LiveUpdate`] held by the audio thread in the [`AudioActor`].
+pub struct UpdateLive(pub LiveUpdate);
 
-impl Command<Write> for UpdateCmd {
+impl Command<Write> for UpdateLive {
     type Output = ();
     type Actor = AudioActor;
 
