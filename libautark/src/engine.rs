@@ -8,18 +8,26 @@ pub mod tick;
 pub mod transport;
 pub mod util;
 
+pub use errors::EngineError;
+pub use manager::{
+    Actor, ActorRef, HasActorRef, Manager, MultithreadManager, Permission, Read, StdManager, Write,
+    asset, audio, project,
+};
 pub use tick::Tick;
 
-use crate::engine::manager::{HasHandle, MultithreadManager, Permission};
+/// Helper to group these "pub use"s as commands
+pub mod commands {
+    pub use super::manager::{Command, asset::commands::*, audio::*, project::commands::*};
+}
+
 use crate::{
     engine::{
+        asset::AssetActor,
+        audio::AudioActor,
+        commands::{Publish, UpdateCmd},
         constants::DEFAULT_MANAGER_CAPACITY,
-        manager::{
-            Handle, IntoEnvelope, Manager, StdManager,
-            asset::AssetActor,
-            audio::{AudioActor, UpdateCmd},
-            project::{ProjectActor, commands::meta::Publish},
-        },
+        manager::Command,
+        project::ProjectActor,
     },
     model::{flow::NodeID, project::ProjectData},
 };
@@ -44,7 +52,7 @@ impl EngineConfig {
     ///
     /// # Errors
     ///
-    /// This function will return an error if there is no audio output device, the device has been disconnected, the outptu device has no default configuration, or the device selected is not an output device.
+    /// This function will return an error if there is no audio output device, the device has been disconnected, the output device has no default configuration, or the device selected is not an output device.
     pub fn create() -> Result<Self> {
         use anyhow::Context;
         use cpal::traits::{DeviceTrait, HostTrait};
@@ -68,26 +76,26 @@ impl EngineConfig {
     }
 }
 
-/// The heart of it all, the `Engine`. Manages the [`Actor`](manager::Actor)s, the audio thread, garbage thread, and playhead.
+/// The heart of it all. Manages the [`Actor`]s, the audio thread, garbage thread, and playhead.
 pub struct Engine {
     /// The current location of the playhead. Is `Arc` so it can be shared with the audio thread.
     pub playhead: Arc<AtomicU64>,
     /// Engine Configuration
     config: EngineConfig,
     /// Handles to the actors
-    asset_h: Handle<AssetActor>,
+    asset_h: ActorRef<AssetActor>,
     /// Ditto
-    project_h: Handle<ProjectActor>,
+    project_h: ActorRef<ProjectActor>,
     /// Ditto
-    audio_h: Handle<AudioActor>,
+    audio_h: ActorRef<AudioActor>,
 }
 
 impl Engine {
-    /// .
+    /// Create a new [`Engine`].
     ///
     /// # Errors
     ///
-    /// This function will return an error if .
+    /// This function will return an error if creating the [`EngineConfig`] fails.
     pub fn new(project: ProjectData) -> Result<Self> {
         let config = EngineConfig::create()?;
 
@@ -111,7 +119,7 @@ impl Engine {
         })
     }
 
-    pub async fn publish(&self, filter: Option<Vec<NodeID>>) {
+    pub(crate) async fn publish(&self, filter: Option<Vec<NodeID>>) {
         let update = self
             .project_h
             .call(Publish {
@@ -124,33 +132,36 @@ impl Engine {
     }
 
     #[must_use]
+    #[expect(missing_docs)]
     pub const fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
 
     #[must_use]
+    #[expect(missing_docs)]
     pub const fn channels(&self) -> u16 {
         self.config.config.channels
     }
 
+    #[expect(missing_docs)]
     pub fn move_playhead(&self, to: Tick) {
         self.playhead.swap(to.0, Ordering::Relaxed);
     }
 }
 
-impl HasHandle<ProjectActor> for Engine {
-    fn handle(&self) -> &Handle<ProjectActor> {
+impl HasActorRef<ProjectActor> for Engine {
+    fn get_ref(&self) -> &ActorRef<ProjectActor> {
         &self.project_h
     }
 }
-impl HasHandle<AssetActor> for Engine {
-    fn handle(&self) -> &Handle<AssetActor> {
+impl HasActorRef<AssetActor> for Engine {
+    fn get_ref(&self) -> &ActorRef<AssetActor> {
         &self.asset_h
     }
 }
 
-impl HasHandle<AudioActor> for Engine {
-    fn handle(&self) -> &Handle<AudioActor> {
+impl HasActorRef<AudioActor> for Engine {
+    fn get_ref(&self) -> &ActorRef<AudioActor> {
         &self.audio_h
     }
 }
@@ -159,18 +170,18 @@ impl Engine {
     pub async fn get<C, P>(&self, command: C) -> C::Output
     where
         P: Permission<C::Actor>,
-        C: IntoEnvelope<P>,
-        Self: HasHandle<C::Actor>,
+        C: Command<P>,
+        Self: HasActorRef<C::Actor>,
     {
-        HasHandle::<C::Actor>::handle(self).call(command).await
+        HasActorRef::<C::Actor>::get_ref(self).call(command).await
     }
 
     pub async fn fire<C, P>(&self, command: C)
     where
         P: Permission<C::Actor>,
-        C: IntoEnvelope<P>,
-        Self: HasHandle<C::Actor>,
+        C: Command<P>,
+        Self: HasActorRef<C::Actor>,
     {
-        let _ = HasHandle::<C::Actor>::handle(self).notify(command).await;
+        let _ = HasActorRef::<C::Actor>::get_ref(self).notify(command).await;
     }
 }

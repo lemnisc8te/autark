@@ -1,3 +1,5 @@
+//! Actor for managing the audio thread/callback
+
 use std::sync::Arc;
 
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -8,14 +10,17 @@ use cpal::traits::StreamTrait;
 use crate::engine::{
     EngineConfig,
     constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
-    manager::{Actor, Command, Handle, HasHandle, Modify, Permission, StdCarrier},
-    schedule::CompiledGraph,
+    manager::{Actor, ActorRef, Command, HasActorRef, Permission, Write},
+    schedule::CompiledSchedule,
     state::{Garbage, GraphUpdate, NodeStatePool},
     tick::Tick,
     transport::{Transport, TransportState},
     util::abp::AudioBufferPool,
 };
 
+/// Hacky workaround to get [`rtrb::Producer`] to be sync so that [`AudioActor`] can satisfy [`Actor`]'s [`Sync`] requirement.
+///
+/// This only works if ONLY 1 thread accesses the actor at a time.
 pub struct SyncProducer<T>(pub rtrb::Producer<T>);
 
 // SAFETY: We guarantee that despite implementing Sync,
@@ -27,14 +32,14 @@ pub struct AudioActor {
     update_tx: SyncProducer<GraphUpdate>,
     pub transport: Arc<Transport>,
     _stream: cpal::Stream,
-    loopback: Handle<Self>,
+    loopback: ActorRef<Self>,
 }
 
 impl AudioActor {
     pub fn init(
         config: &EngineConfig,
         playhead: Arc<AtomicU64>,
-        loopback: Handle<Self>,
+        loopback: ActorRef<Self>,
     ) -> Result<Self> {
         let transport = Arc::new(Transport::new());
         let init_update = GraphUpdate::default();
@@ -129,7 +134,7 @@ impl AudioActor {
 
     /// Runs the compiled schedule for one block and returns the master mix.
     pub fn execute_block<'a>(
-        schedule: &CompiledGraph,
+        schedule: &CompiledSchedule,
         block_start: Tick,
         pool: &'a mut AudioBufferPool,
         state_pool: &mut NodeStatePool,
@@ -160,21 +165,21 @@ impl AudioActor {
 
 pub struct TransportCmd(pub TransportState);
 
-impl Command<Modify> for TransportCmd {
+impl Command<Write> for TransportCmd {
     type Actor = AudioActor;
     type Output = ();
-    async fn execute(self, actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor.transport.transport(self.0);
     }
 }
 
 pub struct Play;
 
-impl Command<Modify> for Play {
+impl Command<Write> for Play {
     type Actor = AudioActor;
     type Output = ();
 
-    async fn execute(self, actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         println!("Playing... press enter to quit");
         actor.transport.play();
     }
@@ -182,11 +187,11 @@ impl Command<Modify> for Play {
 
 pub struct UpdateCmd(pub GraphUpdate);
 
-impl Command<Modify> for UpdateCmd {
+impl Command<Write> for UpdateCmd {
     type Output = ();
     type Actor = AudioActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         assert!(
             actor.update_tx.0.push(self.0).is_ok(),
             "ring full, audio update dropped"
@@ -194,19 +199,17 @@ impl Command<Modify> for UpdateCmd {
     }
 }
 
-impl HasHandle<Self> for AudioActor {
-    fn handle(&self) -> &Handle<Self> {
+impl HasActorRef<Self> for AudioActor {
+    fn get_ref(&self) -> &ActorRef<Self> {
         &self.loopback
     }
 }
 
 impl Actor for AudioActor {
-    type InitParams = (EngineConfig, Arc<AtomicU64>);
+    type InitParam = (EngineConfig, Arc<AtomicU64>);
     type Data = Self;
-    /// The audio stream is inaccessible
-    type Carrier = StdCarrier<Self>;
 
-    fn new((config, playhead): Self::InitParams, loopback: Handle<Self>) -> Self {
+    fn new((config, playhead): Self::InitParam, loopback: ActorRef<Self>) -> Self {
         Self::init(&config, playhead, loopback).unwrap()
     }
 }

@@ -1,13 +1,17 @@
+//! Actor for [`ProjectData`]-related operations
+
 use crate::{
-    engine::manager::{Handle, HasHandle, StdCarrier},
+    engine::manager::{ActorRef, HasActorRef},
     model::project::{ProjectData, ProjectHistory},
 };
 
 use crate::engine::manager::Actor;
 
+pub mod commands;
+
 pub struct ProjectActor {
     pub data: ProjectHistory,
-    pub loopback: Handle<Self>,
+    pub loopback: ActorRef<Self>,
 }
 
 impl ProjectActor {
@@ -22,20 +26,17 @@ impl ProjectActor {
     }
 }
 
-pub mod commands;
-
-impl HasHandle<Self> for ProjectActor {
-    fn handle(&self) -> &Handle<Self> {
+impl HasActorRef<Self> for ProjectActor {
+    fn get_ref(&self) -> &ActorRef<Self> {
         &self.loopback
     }
 }
 
 impl Actor for ProjectActor {
-    type InitParams = ProjectData;
-    type Carrier = StdCarrier<Self>;
+    type InitParam = ProjectData;
     type Data = ProjectHistory;
 
-    fn new(current: Self::InitParams, loopback: Handle<Self>) -> Self {
+    fn new(current: Self::InitParam, loopback: ActorRef<Self>) -> Self {
         Self {
             data: ProjectHistory::new(current),
             loopback,

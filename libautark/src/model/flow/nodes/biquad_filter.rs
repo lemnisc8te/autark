@@ -48,10 +48,10 @@ impl BiquadFilter {
         filter_type: FilterType,
         sample_rate: u32,
         freq: f32,
-        q: f32,
+        q_freq: f32,
         db_gain: f32,
     ) -> Self {
-        let mut f = Self {
+        let mut filter = Self {
             channels: channels as usize,
             filter_type,
             b0: 1.0,
@@ -60,8 +60,8 @@ impl BiquadFilter {
             a1: 0.0,
             a2: 0.0,
         };
-        f.cook_coefficients(sample_rate, freq, q, db_gain);
-        f
+        filter.cook_coefficients(sample_rate, freq, q_freq, db_gain);
+        filter
     }
 
     /// Computes coefficients based on the Audio EQ Cookbook

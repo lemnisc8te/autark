@@ -3,13 +3,13 @@ use slotmap::SecondaryMap;
 use std::collections::HashSet;
 
 use crate::{
-    engine::{constants::MAX_NODES, schedule::CompiledGraph},
+    engine::{constants::MAX_NODES, schedule::CompiledSchedule},
     model::flow::NodeID,
 };
 
 #[derive(Default)]
 pub struct GraphUpdate {
-    pub schedule: CompiledGraph,
+    pub schedule: CompiledSchedule,
     pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>,
     pub state_removals: Vec<NodeID>,
 }

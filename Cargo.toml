@@ -15,10 +15,15 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "fs",
 console-subscriber = "0.5.0"
 
 [workspace.lints.rust]
+# Forbid
 unused_unsafe = "forbid"
 unused_allocation = "forbid"
+
+# Deny
 unreachable_pub = "deny"
 unused_qualifications = "deny"
+
+# Warn
 missing_docs = "warn"
 
 [workspace.lints.clippy]
@@ -54,8 +59,12 @@ panic = "warn"
 dbg_macro = "warn"
 std_instead_of_core = "warn"
 large_future = "warn"
+# missing_docs_in_private_items = "warn"
 
 # Allowed
 default_trait_access = "allow"
-type_complexity = "allow"
+# type_complexity = "allow"
 cargo_common_metadata = "allow"
+
+[workspace.lints.rustdoc]
+all = "deny"

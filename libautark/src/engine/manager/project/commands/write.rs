@@ -3,10 +3,9 @@ use core::marker::PhantomData;
 
 use crate::{
     engine::{
-        manager::{
-            Command, Modify, Permission,
-            project::{ProjectActor, commands::ProjectCommand},
-        },
+        asset::AssetActor,
+        manager::{ActorRef, Command, Permission, Write, project::ProjectActor},
+        state::GraphUpdate,
         tick::Tick,
     },
     model::{
@@ -26,9 +25,7 @@ pub struct AddTrack<K: Kind> {
     pub channels: u16,
 }
 
-impl<K: Kind> ProjectCommand for AddTrack<K> {}
-
-impl<K: Kind> Command<Modify> for AddTrack<K>
+impl<K: Kind> Command<Write> for AddTrack<K>
 where
     TrackReader<K>: Node,
     K::Track: Stored<Location = ProjectData>,
@@ -37,7 +34,7 @@ where
     type Output = (<K::Track as Stored>::ID, NodeID);
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().add_track::<K>(self.name, self.channels))
             .await
@@ -46,9 +43,7 @@ where
 
 pub struct RemoveTrack<K: Kind>(pub <K::Track as Stored>::ID);
 
-impl<K: Kind> ProjectCommand for RemoveTrack<K> {}
-
-impl<K> Command<Modify> for RemoveTrack<K>
+impl<K> Command<Write> for RemoveTrack<K>
 where
     K: Kind,
     K::Track: Stored<Location = ProjectData>,
@@ -57,7 +52,7 @@ where
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         {
             actor
                 .mutate(async |proj| proj.project_mut().remove_track::<K>(self.0))
@@ -73,9 +68,7 @@ pub struct AddClip<K: Kind> {
     pub asset_id: <K::Asset as Stored>::ID,
 }
 
-impl<K: Kind> ProjectCommand for AddClip<K> {}
-
-impl<K> Command<Modify> for AddClip<K>
+impl<K> Command<Write> for AddClip<K>
 where
     K: Kind,
     K::Track: Stored<Location = ProjectData>,
@@ -84,7 +77,7 @@ where
     type Output = Result<<K::Clip as Stored>::ID>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
                 proj.project_mut().add_clip_to_track::<K>(
@@ -104,9 +97,7 @@ pub struct MoveClip<K: Kind> {
     pub new_start: Tick,
 }
 
-impl<K: Kind> ProjectCommand for MoveClip<K> {}
-
-impl<K> Command<Modify> for MoveClip<K>
+impl<K> Command<Write> for MoveClip<K>
 where
     K: Kind,
     K::Track: Stored<Location = ProjectData>,
@@ -115,7 +106,7 @@ where
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
                 proj.project_mut()
@@ -129,13 +120,11 @@ pub struct AddNode<N: Node> {
     pub node: N,
 }
 
-impl<N: Node> ProjectCommand for AddNode<N> {}
-
-impl<N: Node> Command<Modify> for AddNode<N> {
+impl<N: Node> Command<Write> for AddNode<N> {
     type Output = NodeID;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().graph.add_node(self.node))
             .await
@@ -147,13 +136,11 @@ pub struct AddLink {
     pub to: InputSocketID,
 }
 
-impl ProjectCommand for AddLink {}
-
-impl Command<Modify> for AddLink {
+impl Command<Write> for AddLink {
     type Output = Result<Option<OutputSocketID>>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().add_link(self.from, self.to))
             .await
@@ -165,13 +152,11 @@ pub struct RemoveLink {
     pub to: InputSocketID,
 }
 
-impl ProjectCommand for RemoveLink {}
-
-impl Command<Modify> for RemoveLink {
+impl Command<Write> for RemoveLink {
     type Output = ();
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().remove_link(self.from, self.to))
             .await;
@@ -183,8 +168,6 @@ pub struct AddNodeInput<K: Kind> {
     pub(crate) _p: PhantomData<K>,
 }
 
-impl<K: Kind> ProjectCommand for AddNodeInput<K> {}
-
 impl<K: Kind> AddNodeInput<K> {
     #[must_use]
     pub const fn to(node_id: NodeID) -> Self {
@@ -194,11 +177,11 @@ impl<K: Kind> AddNodeInput<K> {
         }
     }
 }
-impl<K: Kind> Command<Modify> for AddNodeInput<K> {
+impl<K: Kind> Command<Write> for AddNodeInput<K> {
     type Output = Result<InputSocketID>; // index of the newly created socket
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
                 proj.project_mut().add_input_socket_to_node(
@@ -214,13 +197,11 @@ pub struct RemoveNodeInput {
     pub node_id: NodeID,
 }
 
-impl ProjectCommand for RemoveNodeInput {}
-
-impl Command<Modify> for RemoveNodeInput {
+impl Command<Write> for RemoveNodeInput {
     type Output = Result<()>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| proj.project_mut().remove_node_input(self.node_id))
             .await
@@ -239,15 +220,7 @@ where
     pub(crate) _t: PhantomData<T>,
 }
 
-impl<K, F, T> ProjectCommand for MutateTrack<K, F, T>
-where
-    K: Kind,
-    F: FnOnce(&mut K::Track) -> T + Send,
-    T: Send,
-{
-}
-
-impl<K, F, T> Command<Modify> for MutateTrack<K, F, T>
+impl<K, F, T> Command<Write> for MutateTrack<K, F, T>
 where
     K: Kind,
     F: FnOnce(&mut K::Track) -> T + Send + 'static,
@@ -257,7 +230,7 @@ where
     type Output = Result<T>;
     type Actor = ProjectActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .mutate(async |proj| {
                 let the_ref = K::Track::access_mut(proj)
@@ -265,6 +238,23 @@ where
                     .ok_or(anyhow!("Invalid Key: {:?}", self.id))?;
                 Ok((self.func)(the_ref))
             })
+            .await
+    }
+}
+
+pub struct Publish {
+    pub asset_h: ActorRef<AssetActor>,
+    pub filter: Option<Vec<NodeID>>,
+}
+
+impl Command<Write> for Publish {
+    type Output = Result<GraphUpdate>;
+    type Actor = ProjectActor;
+
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
+        actor
+            .data
+            .publish_current(&self.asset_h, self.filter.as_deref())
             .await
     }
 }

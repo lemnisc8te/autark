@@ -27,6 +27,4 @@ pub const fn fast_inv_sqrt(number: f32) -> f32 {
     y * (THREEHALFS - (number * 0.5 * y * y))
 }
 
-pub const INV_SQRT_2: f32 = 0.707_106_781_18;
-
 pub const F32_EQ_ERR_MARGIN: f32 = 0.00001;

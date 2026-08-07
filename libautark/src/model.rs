@@ -99,21 +99,31 @@ impl DataKind {
     }
 }
 
+/// A block of audio.
 pub struct RenderBlock<'b> {
-    pub buf: &'b mut [f32],
-    pub block_start: Tick,
-    pub channels: u16,
+    buf: &'b mut [f32],
+    block_start: Tick,
+    channels: u16,
 }
 
-pub trait Renderable: Send {
+/// A trait describing object that can be immediately rendered to audio.
+pub(crate) trait Renderable: Send {
+    /// Render this object into the `block`.
     fn render(&self, block: &mut RenderBlock);
 }
 
+/// [`Stored`] helps things (typically parameterized over [`Kind`]) held somewhere (typically an [`Actor`](crate::engine::Actor)) find out where they are. It makes it easier to get the corresponding type for each [`Kind`]'s [`Track`], [`Clip`], or [`Asset`]
 pub trait Stored: Sized {
+    /// The type of ID for this object. Must impl [`slotmap::Key`].
     type ID: Key + Serialize + DeserializeOwned + Send + Sync + 'static;
+    /// The type of the location where this object's map is stored
     type Location;
+    /// An optional wrapper around this object that is stored in the map
     type Storage;
 
+    /// Get shared access to the [`SlotMap`] containing this object.
     fn access(loc: &Self::Location) -> &SlotMap<Self::ID, Self::Storage>;
+
+    /// Get mutable access to the [`SlotMap`] containing this object.
     fn access_mut(loc: &mut Self::Location) -> &mut SlotMap<Self::ID, Self::Storage>;
 }

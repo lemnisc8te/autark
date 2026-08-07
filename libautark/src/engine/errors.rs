@@ -8,7 +8,7 @@ use crate::model::{
 
 #[derive(Debug, Error)]
 #[expect(missing_docs)]
-/// Errors created by the [`Engine`]
+/// Errors created by the [`Engine`](super::Engine).
 pub enum EngineError {
     #[error("Track was not found")]
     TrackNotFound,

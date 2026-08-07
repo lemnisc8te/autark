@@ -7,7 +7,7 @@ use tokio::sync::watch;
 
 use crate::{
     engine::manager::{
-        Command, Modify, Permission, Query,
+        Command, Permission, Read, Write,
         asset::{AssetRegistry, AssetSlot},
     },
     model::asset::{AssetData, AudioAsset, AudioAssetID},
@@ -16,11 +16,11 @@ use crate::{
 /// Subscribe to an [`AudioAsset`], receiving a `[tokio::sync::watch]` channel that can be awaited to recieve the asset once it has finished loading.
 pub struct SubscribeAudioAsset(pub AudioAssetID);
 
-impl Command<Query> for SubscribeAudioAsset {
+impl Command<Read> for SubscribeAudioAsset {
     type Output = watch::Receiver<AssetData<AudioAsset>>;
     type Actor = AssetActor;
 
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor.reg.audio.get(self.0).unwrap().watch.subscribe()
     }
 }
@@ -28,11 +28,11 @@ impl Command<Query> for SubscribeAudioAsset {
 /// Asynchronously wait for an [`AudioAsset`] to finish loading.
 pub struct WaitForAudioAsset(pub AudioAssetID);
 
-impl Command<Query> for WaitForAudioAsset {
+impl Command<Read> for WaitForAudioAsset {
     type Output = Result<AudioAsset>;
     type Actor = AssetActor;
 
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         let mut rx = actor.reg.audio.get(self.0).unwrap().watch.subscribe();
         rx.wait_for(|data| match data {
             AssetData::Ready(_) | AssetData::Failed(_) => true,
@@ -54,11 +54,11 @@ impl Command<Query> for WaitForAudioAsset {
 /// Immediately returns an [`AudioAssetID`] that can be used with [`WaitForAudioAsset`] to get the `[AudioAsset]` itself.
 pub struct LoadAudioAsset(pub PathBuf, pub u32);
 
-impl Command<Modify> for LoadAudioAsset {
+impl Command<Write> for LoadAudioAsset {
     type Output = Result<AudioAssetID>;
     type Actor = AssetActor;
 
-    async fn execute(self, mut actor: <Modify as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         let new_key = actor.reg.audio.insert(AssetSlot::new(AssetData::Pending));
 
         let result =

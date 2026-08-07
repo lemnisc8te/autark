@@ -1,6 +1,6 @@
-//! Autark is an experimental audio tool designed to create interesting and beautiful sounds
+//! Autark is an experimental audio tool designed to create interesting and beautiful sounds.
 //!
-//! [`libautark`] is the library that provides backend functionality. It uses a [`Command`]-based API to interface with an [`Engine`].
+//! [`libautark`](module@libautark) is the library that provides backend functionality. It uses a [`Command`](engine::Command)-based API to interface with an [`Engine`].
 //! This API offers great flexibilty, including the ability to use `libautark` programmatically, within a UI, or something else entirely!
 //!
 //! The library is roughly split into two parts:
@@ -13,17 +13,13 @@ use assert_no_alloc::AllocDisabler;
 
 #[cfg(debug_assertions)] // required when disable_release is set (default)
 #[global_allocator]
-static A: AllocDisabler = AllocDisabler;
+static ALLOC: AllocDisabler = AllocDisabler;
 
 use crate::{
     engine::{
-        manager::{
-            asset::commands::{LoadAudioAsset, WaitForAudioAsset},
-            audio::{Play, TransportCmd},
-            project::commands::{
-                AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId, InputSocketOf,
-                OutputSocketOf,
-            },
+        commands::{
+            AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId, InputSocketOf,
+            LoadAudioAsset, OutputSocketOf, Play, TransportCmd, WaitForAudioAsset,
         },
         transport::TransportState,
     },
@@ -38,7 +34,7 @@ use anyhow::Result;
 use engine::Engine;
 use futures::FutureExt;
 
-async fn demo() -> Result<()> {
+pub async fn demo() -> Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
     let engine = {
         let project = ProjectData::new();

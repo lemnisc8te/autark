@@ -1,11 +1,5 @@
 use crate::{
-    engine::{
-        manager::{
-            Handle,
-            asset::{AssetActor, commands::WaitForAudioAsset},
-        },
-        tick::Tick,
-    },
+    engine::{ActorRef, asset::AssetActor, commands::WaitForAudioAsset, tick::Tick},
     model::{
         Audio, Kind, RenderBlock, Renderable, Stored,
         asset::{AudioAsset, AudioAssetID, AudioAssetPayload},
@@ -69,7 +63,7 @@ pub struct ResolvedAudioClip {
 }
 
 impl ResolvedAudioClip {
-    pub async fn from_clip(clip: AudioClip, asset_h: Handle<AssetActor>) -> Result<Self> {
+    pub async fn from_clip(clip: AudioClip, asset_h: ActorRef<AssetActor>) -> Result<Self> {
         let asset = asset_h.call(WaitForAudioAsset(clip.asset_id)).await?;
 
         Ok(Self {

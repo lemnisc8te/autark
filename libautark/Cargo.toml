@@ -10,23 +10,22 @@ categories = ["multimedia::audio"]
 workspace = true
 
 [dependencies]
-anyhow = {workspace = true}
+anyhow.workspace = true
 arc-swap = "1.9.2"
 assert_no_alloc = "1.1.2"
 async-trait = "0.1.91"
-audio-blocks = "0.7.0"
 audioadapter-buffers = "4.0.0"
-console-subscriber = {workspace = true}
 cpal = "0.18.1"
 dyn-clone = "1.0.20"
 flume = "0.12.0"
 futures = "0.3.33"
-itertools = "0.15.0"
+itertools = "0.14.0"
 rtrb = "0.3.4"
 rubato = "4.0.0"
-serde = {workspace = true}
+serde.workspace = true
 slotmap = {version = "1.1.1", features = ["serde"]}
 symphonia = {version = "0.6.0", features = ["mp3"]}
-thiserror = {workspace = true}
-tokio = { workspace = true }
-
+thiserror.workspace = true
+tokio.workspace = true 
+[dev-dependencies]
+console-subscriber.workspace = true

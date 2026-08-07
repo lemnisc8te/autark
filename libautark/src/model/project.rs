@@ -1,12 +1,15 @@
+//! Project-related types and definitions.
+
 use core::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     engine::{
+        ActorRef,
+        asset::AssetActor,
         constants::{MAX_BUFFER_SLOTS, MAX_NODES},
         errors::EngineError,
-        manager::{Handle, asset::AssetActor},
-        schedule::{CompiledGraph, ScheduleStep, SlotIndex},
+        schedule::{CompiledSchedule, ScheduleStep, SlotIndex},
         state::GraphUpdate,
         tick::Tick,
     },
@@ -19,10 +22,7 @@ use crate::{
         flow::{
             Node, NodeID,
             graph::NodeGraph,
-            nodes::{
-                master::Master,
-                trackreader::{TrackReader, TrackReaderState},
-            },
+            nodes::trackreader::{TrackReader, TrackReaderState},
             socket::{InputSocketID, OutputSocketID, Socket, SocketMeta},
         },
     },
@@ -192,7 +192,7 @@ impl ProjectData {
         &self,
         filter: Option<&[NodeID]>,
         capture_id: NodeID,
-    ) -> Result<CompiledGraph> {
+    ) -> Result<CompiledSchedule> {
         let order = self.graph.topo_sort(filter)?;
 
         let mut socket_slot: HashMap<OutputSocketID, SlotIndex> = HashMap::new();
@@ -246,7 +246,7 @@ impl ProjectData {
             .copied()
             .ok_or(EngineError::NodeNotFound(capture_id))?;
 
-        Ok(CompiledGraph {
+        Ok(CompiledSchedule {
             steps,
             buffer_count,
             capture_slot,
@@ -328,7 +328,7 @@ impl ProjectHistory {
     /// 3. The graph is too large for the real-time budget
     pub async fn publish_current(
         &mut self,
-        asset_h: &Handle<AssetActor>,
+        asset_h: &ActorRef<AssetActor>,
         filter: Option<&[NodeID]>,
     ) -> Result<GraphUpdate> {
         let schedule = self
@@ -362,7 +362,7 @@ impl ProjectHistory {
 
     async fn create_node_state(
         &self,
-        asset_h: &Handle<AssetActor>,
+        asset_h: &ActorRef<AssetActor>,
         node_id: NodeID,
     ) -> (NodeID, Box<dyn Any + Send>) {
         let node = self.project().graph.nodes[node_id].clone();

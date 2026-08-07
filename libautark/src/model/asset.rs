@@ -1,9 +1,15 @@
+//! Asset-related types and definitions.
+//!
+//! Assets are the raw resources used to create projects. Audio files, MIDI data, and control curves are all Assets.
+//!
+//! Assets are written to disk, and are not stored directly in the project metadata.
+
 use std::{path::PathBuf, sync::Arc};
 
 use serde::Serialize;
 
 use crate::{
-    engine::manager::asset::{AssetRegistry, AssetSlot},
+    engine::asset::{AssetRegistry, AssetSlot},
     model::{Audio, Kind, Stored},
 };
 
@@ -27,11 +33,11 @@ unsafe impl slotmap::Key for AudioAssetID {
 slotmap::__serialize_key!(AudioAssetID);
 slotmap::new_key_type!();
 
-/// Trait defining an `Asset` of a certain `Kind`.
+/// Trait defining an [`Asset`] of a certain [`Kind`].
 pub trait Asset<K: Kind> {}
 
 #[derive(Debug)]
-/// Defines the loading state of an `Asset`.
+/// Defines the loading state of an [`Asset`].
 pub enum AssetData<Data: Clone> {
     /// The `Asset` is being loaded.
     Pending,

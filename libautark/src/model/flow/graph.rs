@@ -1,3 +1,5 @@
+//! NodeGraph-related dtypes and definitions
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,

@@ -1,4 +1,7 @@
-//! Module for Flow related types
+//! Flow related types and definitions.
+//!
+//! Flow is the representation of the signal graph in a project. The flow graph defines relationships between [`Node`]s, allowing for powerful audio processing in a visual manner.
+
 use core::any::Any;
 
 use dyn_clone::DynClone;

@@ -1,12 +1,11 @@
 //! Utility Node
+use std::f32::consts::FRAC_1_SQRT_2;
+
 use crate::{
     engine::{
         Tick,
         schedule::SlotIndex,
-        util::{
-            abp::PoolExecutor,
-            math::{F32_EQ_ERR_MARGIN, INV_SQRT_2},
-        },
+        util::{abp::PoolExecutor, math::F32_EQ_ERR_MARGIN},
     },
     model::{
         DataKind,
@@ -72,11 +71,11 @@ impl Node for Utility {
 
             // 2. Stereo Width (Mid-Side Processing)
             if (state.stereo_width - 1.0).abs() > F32_EQ_ERR_MARGIN {
-                let mid = (left + right) * INV_SQRT_2;
-                let side = (left - right) * INV_SQRT_2 * state.stereo_width;
+                let mid = (left + right) * FRAC_1_SQRT_2;
+                let side = (left - right) * FRAC_1_SQRT_2 * state.stereo_width;
 
-                left = (mid + side) * INV_SQRT_2;
-                right = (mid - side) * INV_SQRT_2;
+                left = (mid + side) * FRAC_1_SQRT_2;
+                right = (mid - side) * FRAC_1_SQRT_2;
             }
 
             // 3. Gain Application

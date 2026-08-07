@@ -1,4 +1,4 @@
-//! Asset loading
+//! Actor for Asset-related operations
 
 use anyhow::Result;
 use core::marker::PhantomData;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 use crate::{
-    engine::manager::{Actor, Handle, HasHandle, StdCarrier, asset::commands::LoadAudioAsset},
+    engine::manager::{Actor, ActorRef, HasActorRef, asset::commands::LoadAudioAsset},
     model::{
         Audio, Kind,
         asset::{AssetData, AudioAsset, AudioAssetID, AudioAssetPayload},
@@ -198,21 +198,21 @@ impl AssetRegistry {
 
 pub struct AssetActor {
     reg: AssetRegistry,
-    loopback: Handle<Self>,
+    loopback: ActorRef<Self>,
 }
 
-impl HasHandle<Self> for AssetActor {
-    fn handle(&self) -> &Handle<Self> {
+impl HasActorRef<Self> for AssetActor {
+    fn get_ref(&self) -> &ActorRef<Self> {
         &self.loopback
     }
 }
 
 impl Actor for AssetActor {
-    type InitParams = ();
-    type Carrier = StdCarrier<Self>;
+    type InitParam = ();
+    // type Carrier = StdCarrier<Self>;
     type Data = AssetRegistry;
 
-    fn new((): Self::InitParams, loopback: Handle<Self>) -> Self {
+    fn new((): Self::InitParam, loopback: ActorRef<Self>) -> Self {
         Self {
             reg: AssetRegistry::new(),
             loopback,

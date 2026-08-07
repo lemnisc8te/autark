@@ -1,8 +1,5 @@
 use crate::{
-    engine::manager::{
-        Command, Permission, Query,
-        project::{ProjectActor, commands::ProjectCommand},
-    },
+    engine::manager::{Command, Permission, Read, project::ProjectActor},
     model::flow::{
         NodeID,
         socket::{InputSocketID, OutputSocketID},
@@ -11,13 +8,11 @@ use crate::{
 
 pub struct GetMasterNodeId;
 
-impl ProjectCommand for GetMasterNodeId {}
-
-impl Command<Query> for GetMasterNodeId {
+impl Command<Read> for GetMasterNodeId {
     type Output = NodeID;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .query(async |proj| proj.project().graph.master_node_id)
             .await
@@ -26,13 +21,11 @@ impl Command<Query> for GetMasterNodeId {
 
 pub struct InputSocketOf(pub NodeID, pub usize);
 
-impl ProjectCommand for InputSocketOf {}
-
-impl Command<Query> for InputSocketOf {
+impl Command<Read> for InputSocketOf {
     type Output = InputSocketID;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .query(async move |proj| proj.project().graph.inputs_of(self.0)[self.1])
             .await
@@ -41,13 +34,11 @@ impl Command<Query> for InputSocketOf {
 
 pub struct OutputSocketOf(pub NodeID, pub usize);
 
-impl ProjectCommand for OutputSocketOf {}
-
-impl Command<Query> for OutputSocketOf {
+impl Command<Read> for OutputSocketOf {
     type Output = OutputSocketID;
     type Actor = ProjectActor;
 
-    async fn execute(self, actor: <Query as Permission<Self::Actor>>::Guard) -> Self::Output {
+    async fn execute(self, actor: <Read as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
             .query(async move |proj| proj.project().graph.outputs_of(self.0)[self.1])
             .await

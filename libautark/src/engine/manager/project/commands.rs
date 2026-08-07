@@ -1,9 +1,7 @@
-pub mod meta;
-pub mod mutate;
-pub mod query;
+//! Re-exports for [`ProjectActor`](super::ProjectActor)'s [`Command`](super::super::Command)s
 
-pub use meta::*;
-pub use mutate::*;
-pub use query::*;
+pub mod read;
+pub mod write;
 
-pub trait ProjectCommand {}
+pub use read::*;
+pub use write::*;

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
-use crate::model::{DataKind, flow::NodeID};
+use crate::model::{flow::NodeID, DataKind};
 
 new_key_type! {
     pub struct InputSocketID;
@@ -40,12 +40,7 @@ impl Socket {
 }
 
 impl SocketMeta {
-    pub fn new(
-        owner: NodeID,
-        name: impl Into<String>,
-        kind: DataKind,
-        visible: bool,
-    ) -> Self {
+    pub fn new(owner: NodeID, name: impl Into<String>, kind: DataKind, visible: bool) -> Self {
         Self {
             owner,
 
